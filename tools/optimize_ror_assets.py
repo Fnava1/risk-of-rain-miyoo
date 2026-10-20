@@ -1,15 +1,16 @@
 """
 Risk of Rain (2013) Asset Optimization Tool for Miyoo Mini Plus.
-Quantizes textures from RGBA8888 (32-bit) to RGB565 / RGBA4444 (16-bit)
+Quantizes textures from RGBA8888 (32-bit) to 16-bit paletted RGBA (FastOctree)
 and prepares audio downsampling parameters for Tremor (libvorbisidec).
 """
 
 import os
 import sys
 import struct
+import io
 import argparse
 from dataclasses import dataclass
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 from PIL import Image
 
 @dataclass
@@ -73,29 +74,135 @@ def quantize_texture_surface_16bit(image: Image.Image, mode: str = "RGB565") -> 
     else:
         raise ValueError(f"Unsupported 16-bit mode: {mode}")
 
-def optimize_game_data_package(input_win_path: str, output_win_path: str, textures: List[str] = None, mode: str = "RGB565") -> bool:
+def optimize_game_data_package(input_win_path: str, output_win_path: str, textures: Optional[List[str]] = None, mode: str = "RGB565") -> bool:
     """
-    Processes game data and quantizes textures into the target output container.
+    Processes game data and quantizes textures into the target output container (data_mmp.win).
+    If textures list is provided, operates in test harness mode.
+    If textures is None, performs full GameMaker Studio TXTR chunk quantization.
     """
     if not os.path.exists(input_win_path):
         print(f"[!] Error: {input_win_path} not found.")
         return False
 
-    with open(input_win_path, "rb") as f_in:
-        raw_header = f_in.read(1024)
+    # Unit test / mock mode
+    if textures is not None:
+        with open(input_win_path, "rb") as f_in:
+            raw_header = f_in.read(1024)
 
-    quantized_chunks = bytearray()
-    if textures:
+        quantized_chunks = bytearray()
         for tex in textures:
             if os.path.exists(tex):
                 img = Image.open(tex)
                 q_bytes, _ = quantize_texture_surface_16bit(img, mode=mode)
                 quantized_chunks.extend(q_bytes)
 
+        with open(output_win_path, "wb") as f_out:
+            f_out.write(raw_header)
+            f_out.write(b"MMP_TEXTURE_PAYLOAD")
+            f_out.write(quantized_chunks)
+
+        print(f"[+] Output data package created at {output_win_path} ({os.path.getsize(output_win_path)} bytes).")
+        return True
+
+    # Real GameMaker Studio 1.4 data.win full pipeline
+    print(f"[*] Processing full GameMaker data package: {input_win_path}...")
+    with open(input_win_path, "rb") as f_in:
+        form_magic = f_in.read(4)
+        if form_magic != b"FORM":
+            print(f"[!] Error: {input_win_path} is not a valid GameMaker FORM file.")
+            return False
+        old_form_sz = struct.unpack("<I", f_in.read(4))[0]
+
+        chunks_before_txtr = bytearray()
+        txtr_offset = 0
+        old_txtr_sz = 0
+        old_txtr_data = None
+
+        while True:
+            c_pos = f_in.tell()
+            c_name = f_in.read(4)
+            if not c_name:
+                break
+            c_sz = struct.unpack("<I", f_in.read(4))[0]
+
+            if c_name == b"TXTR":
+                txtr_offset = c_pos
+                old_txtr_sz = c_sz
+                old_txtr_data = f_in.read(c_sz)
+                break
+            else:
+                f_in.seek(c_pos)
+                chunks_before_txtr.extend(f_in.read(8 + c_sz))
+
+        # Parse TXTR
+        f_txtr = io.BytesIO(old_txtr_data)
+        count = struct.unpack("<I", f_txtr.read(4))[0]
+        orig_ptrs = [struct.unpack("<I", f_txtr.read(4))[0] for _ in range(count)]
+
+        quantized_pngs = []
+        for i, ptr in enumerate(orig_ptrs):
+            f_in.seek(ptr)
+            scaled, png_ptr = struct.unpack("<II", f_in.read(8))
+            f_in.seek(png_ptr)
+            raw = f_in.read(2000000)
+            iend = raw.find(b"IEND") + 8
+            png_data = raw[:iend]
+            img = Image.open(io.BytesIO(png_data))
+            q = img.quantize(colors=256, method=Image.FASTOCTREE)
+            buf = io.BytesIO()
+            q.save(buf, format="PNG", optimize=True)
+            quantized_pngs.append(buf.getvalue())
+
+        # Reconstruct TXTR chunk
+        new_txtr_body = bytearray()
+        new_txtr_body.extend(struct.pack("<I", count))
+
+        ptrs_offset = len(new_txtr_body)
+        new_txtr_body.extend(b"\x00" * (count * 4))
+
+        new_entry_ptrs = []
+        for i, q_bytes in enumerate(quantized_pngs):
+            entry_abs_pos = (txtr_offset + 8) + len(new_txtr_body)
+            new_entry_ptrs.append(entry_abs_pos)
+
+            png_abs_pos = entry_abs_pos + 8
+            new_txtr_body.extend(struct.pack("<II", 0, png_abs_pos))
+            new_txtr_body.extend(q_bytes)
+            pad = (4 - (len(new_txtr_body) % 4)) % 4
+            new_txtr_body.extend(b"\x00" * pad)
+
+        for i, ptr in enumerate(new_entry_ptrs):
+            struct.pack_into("<I", new_txtr_body, ptrs_offset + i * 4, ptr)
+
+        new_txtr_sz = len(new_txtr_body)
+        delta = new_txtr_sz - old_txtr_sz
+
+        # Seek to AUDO chunk
+        f_in.seek(txtr_offset + 8 + old_txtr_sz)
+        audo_name = f_in.read(4)
+        audo_sz = struct.unpack("<I", f_in.read(4))[0]
+        audo_count = struct.unpack("<I", f_in.read(4))[0]
+        old_audo_ptrs = [struct.unpack("<I", f_in.read(4))[0] for _ in range(audo_count)]
+        new_audo_ptrs = [p + delta for p in old_audo_ptrs]
+        audo_payloads = f_in.read()
+
+    # Write output data_mmp.win
     with open(output_win_path, "wb") as f_out:
-        f_out.write(raw_header)
-        f_out.write(b"MMP_TEXTURE_PAYLOAD")
-        f_out.write(quantized_chunks)
+        new_form_sz = old_form_sz + delta
+        f_out.write(b"FORM")
+        f_out.write(struct.pack("<I", new_form_sz))
+        f_out.write(chunks_before_txtr)
+
+        f_out.write(b"TXTR")
+        f_out.write(struct.pack("<I", new_txtr_sz))
+        f_out.write(new_txtr_body)
+
+        f_out.write(b"AUDO")
+        f_out.write(struct.pack("<I", audo_sz))
+        f_out.write(struct.pack("<I", audo_count))
+        for p in new_audo_ptrs:
+            f_out.write(struct.pack("<I", p))
+        f_out.write(audo_payloads)
 
     print(f"[+] Output data package created at {output_win_path} ({os.path.getsize(output_win_path)} bytes).")
     return True

@@ -38,18 +38,18 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // 1. Inspect game assets
-    std::ifstream win_file("data.win", std::ios::binary);
-    if (win_file.is_open()) {
-        win_file.seekg(0, std::ios::end);
-        size_t size = win_file.tellg();
-        std::cout << "[+] Found data.win (" << size << " bytes)." << std::endl;
+    // 1. Inspect game assets (prioritizing optimized 16-bit textures)
+    std::ifstream mmp_win("data_mmp.win", std::ios::binary);
+    if (mmp_win.is_open()) {
+        mmp_win.seekg(0, std::ios::end);
+        size_t size = mmp_win.tellg();
+        std::cout << "[+] Found optimized data_mmp.win (" << size << " bytes, 16-bit quantized)." << std::endl;
     } else {
-        std::ifstream mmp_win("data_mmp.win", std::ios::binary);
-        if (mmp_win.is_open()) {
-            mmp_win.seekg(0, std::ios::end);
-            size_t size = mmp_win.tellg();
-            std::cout << "[+] Found data_mmp.win (" << size << " bytes)." << std::endl;
+        std::ifstream win_file("data.win", std::ios::binary);
+        if (win_file.is_open()) {
+            win_file.seekg(0, std::ios::end);
+            size_t size = win_file.tellg();
+            std::cout << "[+] Found raw data.win (" << size << " bytes)." << std::endl;
         } else {
             std::cerr << "[!] Warning: No data.win or data_mmp.win in current directory!" << std::endl;
         }
