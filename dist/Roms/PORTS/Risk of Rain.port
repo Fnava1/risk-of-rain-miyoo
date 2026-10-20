@@ -1,0 +1,35 @@
+#!/bin/sh
+GameName="Risk of Rain"
+GameDir="Risk of Rain"
+GameExecutable="launch.sh"
+GameDataFile="data*.win"
+KillAudioserver=1
+PerformanceMode=0
+Arguments=""
+
+unset LD_PRELOAD
+PORTDIR="$(dirname "$0")"
+
+# Dynamic game directory lookup (relative to Shortcuts/Action, Shortcuts, or ports root)
+if [ -d "$PORTDIR/Games/Risk of Rain" ]; then
+    GAMEDIR="$PORTDIR/Games/Risk of Rain"
+elif [ -d "$PORTDIR/../../Games/Risk of Rain" ]; then
+    GAMEDIR="$PORTDIR/../../Games/Risk of Rain"
+elif [ -d "$PORTDIR/../Games/Risk of Rain" ]; then
+    GAMEDIR="$PORTDIR/../Games/Risk of Rain"
+elif [ -d "/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain" ]; then
+    GAMEDIR="/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain"
+else
+    GAMEDIR="/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain"
+fi
+
+if [ -f "/mnt/SDCARD/Emu/PORTS/launch_standalone.sh" ]; then
+    /mnt/SDCARD/Emu/PORTS/launch_standalone.sh "$GameName" "$GameDir" "$GameExecutable" "$Arguments" "$GameDataFile" "$KillAudioserver" "$PerformanceMode"
+else
+    cd "$GAMEDIR"
+    if [ -f "./launch.sh" ]; then
+        ./launch.sh
+    else
+        ./RiskOfRain
+    fi
+fi

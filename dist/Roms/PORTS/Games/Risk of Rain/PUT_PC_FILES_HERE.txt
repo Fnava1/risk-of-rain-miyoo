@@ -1,0 +1,16 @@
+Risk of Rain (2013) - OnionOS Port Instructions
+================================================
+
+To play Risk of Rain on your Miyoo Mini / Miyoo Mini Plus:
+
+1. Obtain your legally purchased copy of Risk of Rain (2013) on PC (Steam or GOG).
+2. Copy the game's data file:
+   - Copy `data.win` from your PC installation into this folder:
+     `/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain/`
+3. (Recommended) If you want maximum performance and zero RAM pressure (< 28 MB textures),
+   run the offline PC optimizer on your PC before transferring:
+     python tools/optimize_ror_assets.py --input <path_to_game> --output <path_to_game_mmp>
+   This will produce `data_mmp.win` which is pre-quantized to 16-bit RGB565 and downsampled.
+   If `data_mmp.win` is present, it will be automatically prioritized!
+4. Insert your MicroSD card into the Miyoo Mini Plus and launch "Risk of Rain"
+   from the Ports menu (Ports -> Action -> Risk of Rain).
