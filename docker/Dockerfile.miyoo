@@ -1,0 +1,12 @@
+FROM aemiii91/miyoomini-toolchain:latest
+
+WORKDIR /work
+
+# Install additional build utilities if necessary
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    ninja-build \
+    libvorbis-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["/bin/bash"]

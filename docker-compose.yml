@@ -1,0 +1,11 @@
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.miyoo
+    volumes:
+      - .:/work
+    command: >
+      bash -c "mkdir -p build_mmp && cd build_mmp &&
+               cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/miyoo-toolchain.cmake .. &&
+               make -j$$(nproc)"
