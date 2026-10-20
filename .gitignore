@@ -1,1 +1,16 @@
 .superpowers/
+__pycache__/
+*.pyc
+*.o
+*.a
+*.so
+tests/test_pacing
+tests/test_audio
+tests/test_audio_fixes
+tests/test_neon
+tests/test_renderer_fixes
+tests/test_opcodes
+tests/test_vm_fixes
+RiskOfRain
+build_mmp/
+.pytest_cache/

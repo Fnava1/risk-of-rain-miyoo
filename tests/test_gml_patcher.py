@@ -34,7 +34,7 @@ def test_inject_distance_decimation_guard():
     assert "point_distance" in patched
     assert "960" in patched
     assert "% 4" in patched
-    assert "exit" in patched or "return" in patched
+    assert "mp_potential_step" in patched
 
 def test_patch_damage_text_batching():
     """Verify that multiple damage numbers instantiate an accumulator instead of spawning 50 objects."""

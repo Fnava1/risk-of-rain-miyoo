@@ -1,12 +1,10 @@
 FROM aemiii91/miyoomini-toolchain:latest
 
-WORKDIR /work
+ENV PATH="/opt/miyoomini-toolchain/usr/bin:${PATH}:/opt/miyoomini-toolchain/usr/arm-linux-gnueabihf/sysroot/bin"
+ENV CROSS_COMPILE=/opt/miyoomini-toolchain/usr/bin/arm-linux-gnueabihf-
+ENV PREFIX=/opt/miyoomini-toolchain/usr/arm-linux-gnueabihf/sysroot/usr
+ENV UNION_PLATFORM=miyoomini
 
-# Install additional build utilities if necessary
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake \
-    ninja-build \
-    libvorbis-dev \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work
 
 ENTRYPOINT ["/bin/bash"]

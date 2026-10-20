@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <queue>
 #include <string>
 
 struct GMLGrid {
@@ -20,6 +21,15 @@ struct GMLInstance {
     bool active;
 };
 
+struct PriorityItem {
+    int value;
+    double priority;
+
+    bool operator<(const PriorityItem &other) const {
+        return priority < other.priority; // max-heap
+    }
+};
+
 class GMLVM {
 public:
     GMLVM() = default;
@@ -31,9 +41,16 @@ public:
     void ds_grid_set_region(int grid_id, int x1, int y1, int x2, int y2, double val);
     double ds_grid_get(int grid_id, int x, int y) const;
 
+    // ds_priority queue operations for spawn director & elite selections
+    int ds_priority_create();
+    void ds_priority_destroy(int priority_id);
+    void ds_priority_add(int priority_id, int value, double priority);
+    int ds_priority_delete_max(int priority_id);
+
     // Instance activation / spatial deactivation region
     void register_instance(int id, double x, double y);
     void instance_deactivate_region(double left, double top, double width, double height, bool inside, bool notme);
+    void instance_activate_region(double left, double top, double width, double height, bool inside);
     void instance_activate_all();
     bool is_instance_active(int id) const;
 
@@ -43,6 +60,9 @@ public:
 private:
     std::unordered_map<int, GMLGrid> m_grids;
     int m_next_grid_id = 0;
+
+    std::unordered_map<int, std::priority_queue<PriorityItem>> m_priorities;
+    int m_next_priority_id = 0;
 
     std::unordered_map<int, GMLInstance> m_instances;
 };

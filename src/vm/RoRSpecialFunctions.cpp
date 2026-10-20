@@ -20,6 +20,21 @@ void GMLVM::instance_deactivate_region(double left, double top, double width, do
     }
 }
 
+void GMLVM::instance_activate_region(double left, double top, double width, double height, bool inside) {
+    double right = left + width;
+    double bottom = top + height;
+
+    for (auto &pair : m_instances) {
+        GMLInstance &inst = pair.second;
+        bool is_in = (inst.x >= left && inst.x <= right && inst.y >= top && inst.y <= bottom);
+        if (inside) {
+            if (is_in) inst.active = true;
+        } else {
+            if (!is_in) inst.active = true;
+        }
+    }
+}
+
 void GMLVM::instance_activate_all() {
     for (auto &pair : m_instances) {
         pair.second.active = true;

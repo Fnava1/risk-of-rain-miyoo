@@ -5,7 +5,13 @@
 #include <arm_neon.h>
 #endif
 
-static inline uint16_t blend_pixel_rgb565(uint16_t d, uint16_t s, uint8_t a) {
+static inline uint16_t blend_pixel_rgb565(uint16_t d, uint16_t s, uint8_t alpha) {
+    if (alpha == 255) return s;
+    if (alpha == 0) return d;
+
+    uint32_t a = (uint32_t)alpha + 1;
+    uint32_t inv_a = 256 - a;
+
     uint32_t s_r = (s >> 11) & 0x1F;
     uint32_t s_g = (s >> 5) & 0x3F;
     uint32_t s_b = s & 0x1F;
@@ -14,7 +20,6 @@ static inline uint16_t blend_pixel_rgb565(uint16_t d, uint16_t s, uint8_t a) {
     uint32_t d_g = (d >> 5) & 0x3F;
     uint32_t d_b = d & 0x1F;
 
-    uint32_t inv_a = 256 - a;
     uint32_t r = (s_r * a + d_r * inv_a) >> 8;
     uint32_t g = (s_g * a + d_g * inv_a) >> 8;
     uint32_t b = (s_b * a + d_b * inv_a) >> 8;
@@ -24,6 +29,11 @@ static inline uint16_t blend_pixel_rgb565(uint16_t d, uint16_t s, uint8_t a) {
 
 void blend_span_rgb565_scalar(uint16_t *dst, const uint16_t *src, int count, uint8_t alpha) {
     if (!dst || !src || count <= 0) return;
+    if (alpha == 0) return;
+    if (alpha == 255) {
+        memcpy(dst, src, count * sizeof(uint16_t));
+        return;
+    }
 
     for (int i = 0; i < count; i++) {
         dst[i] = blend_pixel_rgb565(dst[i], src[i], alpha);
@@ -32,13 +42,19 @@ void blend_span_rgb565_scalar(uint16_t *dst, const uint16_t *src, int count, uin
 
 void blend_span_rgb565_neon(uint16_t *dst, const uint16_t *src, int count, uint8_t alpha) {
     if (!dst || !src || count <= 0) return;
+    if (alpha == 0) return;
+    if (alpha == 255) {
+        memcpy(dst, src, count * sizeof(uint16_t));
+        return;
+    }
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
     int i = 0;
-    uint16_t inv_alpha = 256 - alpha;
+    uint16_t a = (uint16_t)alpha + 1;
+    uint16_t inv_a = 256 - a;
 
-    uint16x8_t v_alpha = vdupq_n_u16(alpha);
-    uint16x8_t v_inv_alpha = vdupq_n_u16(inv_alpha);
+    uint16x8_t v_alpha = vdupq_n_u16(a);
+    uint16x8_t v_inv_alpha = vdupq_n_u16(inv_a);
     uint16x8_t v_mask_g = vdupq_n_u16(0x3F);
     uint16x8_t v_mask_b = vdupq_n_u16(0x1F);
 
@@ -56,7 +72,7 @@ void blend_span_rgb565_neon(uint16_t *dst, const uint16_t *src, int count, uint8
         uint16x8_t d_g = vandq_u16(vshrq_n_u16(v_dst, 5), v_mask_g);
         uint16x8_t d_b = vandq_u16(v_dst, v_mask_b);
 
-        // Blend: (src * alpha + dst * inv_alpha) >> 8
+        // Accurate integer blend: (src * (alpha+1) + dst * (256 - (alpha+1))) >> 8
         uint16x8_t r = vshrq_n_u16(vmlaq_u16(vmulq_u16(s_r, v_alpha), d_r, v_inv_alpha), 8);
         uint16x8_t g = vshrq_n_u16(vmlaq_u16(vmulq_u16(s_g, v_alpha), d_g, v_inv_alpha), 8);
         uint16x8_t b = vshrq_n_u16(vmlaq_u16(vmulq_u16(s_b, v_alpha), d_b, v_inv_alpha), 8);

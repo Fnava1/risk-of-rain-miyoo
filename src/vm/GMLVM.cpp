@@ -39,3 +39,29 @@ double GMLVM::ds_grid_get(int grid_id, int x, int y) const {
     }
     return grid.data[y * grid.width + x];
 }
+
+int GMLVM::ds_priority_create() {
+    int id = m_next_priority_id++;
+    m_priorities.emplace(id, std::priority_queue<PriorityItem>());
+    return id;
+}
+
+void GMLVM::ds_priority_destroy(int priority_id) {
+    m_priorities.erase(priority_id);
+}
+
+void GMLVM::ds_priority_add(int priority_id, int value, double priority) {
+    auto it = m_priorities.find(priority_id);
+    if (it == m_priorities.end()) return;
+
+    it->second.push(PriorityItem{value, priority});
+}
+
+int GMLVM::ds_priority_delete_max(int priority_id) {
+    auto it = m_priorities.find(priority_id);
+    if (it == m_priorities.end() || it->second.empty()) return -1;
+
+    int val = it->second.top().value;
+    it->second.pop();
+    return val;
+}

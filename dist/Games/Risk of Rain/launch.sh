@@ -10,9 +10,11 @@ cpuclock 1800 2>/dev/null || true
 # 2. Isolate audio subsystem
 killall -9 audioserver 2>/dev/null || true
 
-# 3. Clean exit trap: restore CPU clock, restore system audioserver, flush caches
+# 3. Clean exit trap: restore CPU clock, blank framebuffer, restore system audioserver, flush caches
 cleanup() {
     echo "[*] Restoring system state..."
+    # Clear framebuffer to prevent frozen screen artifacts on exit
+    dd if=/dev/zero of=/dev/fb0 bs=640 count=480 2>/dev/null || true
     cpuclock 1200 2>/dev/null || true
     /customer/app/audioserver &
     sync
