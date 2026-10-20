@@ -13,7 +13,7 @@
 #include <linux/fb.h>
 
 static int s_fb_fd = -1;
-static uint16_t *s_fb_ptr = NULL;
+static void *s_fb_ptr = NULL;
 static size_t s_fb_size = 0;
 static size_t s_line_length = 0;
 static struct fb_var_screeninfo s_vinfo;
@@ -94,9 +94,17 @@ int mmp_fb_init(const char *fb_device) {
     }
 
     s_line_length = s_finfo.line_length > 0 ? s_finfo.line_length : (s_vinfo.xres * (s_vinfo.bits_per_pixel / 8));
-    s_fb_size = s_vinfo.yres_virtual * s_line_length;
-    s_fb_ptr = (uint16_t *)mmap(NULL, s_fb_size, PROT_READ | PROT_WRITE, MAP_SHARED, s_fb_fd, 0);
+    size_t y_res = s_vinfo.yres_virtual > 0 ? s_vinfo.yres_virtual : s_vinfo.yres;
+    if (y_res == 0) y_res = 480;
+    s_fb_size = y_res * s_line_length;
+
+    printf("[+] FB Hardware Info: %ux%u (Virtual: %ux%u) | BPP: %u | LineLength: %zu | TotalSize: %zu\n",
+           s_vinfo.xres, s_vinfo.yres, s_vinfo.xres_virtual, s_vinfo.yres_virtual,
+           s_vinfo.bits_per_pixel, s_line_length, s_fb_size);
+
+    s_fb_ptr = mmap(NULL, s_fb_size, PROT_READ | PROT_WRITE, MAP_SHARED, s_fb_fd, 0);
     if (s_fb_ptr == MAP_FAILED) {
+        s_fb_ptr = NULL;
         close(s_fb_fd);
         s_fb_fd = -1;
         return -4;
@@ -124,14 +132,34 @@ void mmp_fb_close(void) {
 void mmp_video_flip_180(const uint16_t *src_buffer, int width, int height) {
     if (!src_buffer || !s_fb_ptr) return;
 
-    size_t stride_pixels = s_line_length > 0 ? (s_line_length / sizeof(uint16_t)) : (size_t)width;
-
-    for (int y = 0; y < height; y++) {
-        int dst_y = (height - 1) - y;
-        uint16_t *dst_row = s_fb_ptr + dst_y * stride_pixels;
-        for (int x = 0; x < width; x++) {
-            int dst_x = (width - 1) - x;
-            dst_row[dst_x] = src_buffer[y * width + x];
+    if (s_vinfo.bits_per_pixel == 32) {
+        // 32-bit Framebuffer (XRGB8888 / ARGB8888) - Standard on Miyoo Mini Plus
+        for (int y = 0; y < height; y++) {
+            int dst_y = (height - 1) - y;
+            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
+            const uint16_t *src_row = src_buffer + y * width;
+            for (int x = 0; x < width; x++) {
+                int dst_x = (width - 1) - x;
+                uint16_t px = src_row[x];
+                uint32_t r = (px >> 11) & 0x1F;
+                uint32_t g = (px >> 5) & 0x3F;
+                uint32_t b = px & 0x1F;
+                uint8_t r8 = (r * 527 + 23) >> 6;
+                uint8_t g8 = (g * 259 + 33) >> 6;
+                uint8_t b8 = (b * 527 + 23) >> 6;
+                dst_row[dst_x] = (0xFF << 24) | (r8 << 16) | (g8 << 8) | b8;
+            }
+        }
+    } else {
+        // 16-bit Framebuffer (RGB565)
+        for (int y = 0; y < height; y++) {
+            int dst_y = (height - 1) - y;
+            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
+            const uint16_t *src_row = src_buffer + y * width;
+            for (int x = 0; x < width; x++) {
+                int dst_x = (width - 1) - x;
+                dst_row[dst_x] = src_row[x];
+            }
         }
     }
 }
