@@ -7,6 +7,12 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+# Enable persistent execution log for debugging
+LOG_FILE="$DIR/launch.log"
+exec > "$LOG_FILE" 2>&1
+echo "=== Risk of Rain Launcher Started ==="
+date
+
 # 1. Dynamic Hardware Detection & Safe Overclocking
 # Miyoo Mini Plus: 1800 MHz (AXP223 PMIC, large battery, WiFi present)
 # Miyoo Mini (v1/v2/v3/v4 non-Plus): 1400 MHz (conservative ceiling avoiding PMIC panic)
@@ -21,6 +27,8 @@ else
     CPU_FREQ=1400
 fi
 
+echo "[*] Hardware: IS_PLUS=$IS_PLUS, Target CPU_FREQ=$CPU_FREQ MHz"
+
 set_cpu() {
     if [ -f "/mnt/SDCARD/.tmp_update/bin/cpuclock" ]; then
         /mnt/SDCARD/.tmp_update/bin/cpuclock "$1" 2>/dev/null
@@ -32,10 +40,12 @@ set_cpu() {
 set_cpu $CPU_FREQ
 
 # 2. Isolate audio subsystem: kill audioserver to prevent MI_AO hardware conflict
+echo "[*] Killing audioserver..."
 killall -9 audioserver 2>/dev/null || true
 
 # 3. Clean exit trap: restore CPU clock, blank framebuffer, restore system audioserver, flush caches
 cleanup() {
+    echo "[*] Cleaning up and restoring state..."
     # 1. Flush filesystem buffers to SD card to prevent FAT32/exFAT corruption
     sync
 
@@ -56,18 +66,30 @@ cleanup() {
     elif command -v audioserver >/dev/null 2>&1; then
         audioserver &
     fi
+    echo "=== Risk of Rain Launcher Finished ==="
+    sync
 }
 trap cleanup EXIT INT TERM HUP
 
 # 4. Export library paths
 export LD_LIBRARY_PATH="$DIR/libs:/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain/libs:$LD_LIBRARY_PATH"
+echo "[*] LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
 # 5. Check asset presence
+echo "[*] Inspecting files in $DIR:"
+ls -la "$DIR"
+
 if [ ! -f "./data_mmp.win" ] && [ ! -f "./data.win" ]; then
-    echo "Error: Neither data_mmp.win nor data.win found in $DIR!"
+    echo "[!] ERROR: Neither data_mmp.win nor data.win found in $DIR!"
     exit 1
 fi
 
 # 6. Launch native Risk of Rain runner
+echo "[*] Checking binary ./RiskOfRain permissions:"
+ls -la ./RiskOfRain
 chmod +x ./RiskOfRain 2>/dev/null
+
+echo "[*] Executing ./RiskOfRain..."
 ./RiskOfRain
+RR_EXIT=$?
+echo "[*] ./RiskOfRain exited with status: $RR_EXIT"

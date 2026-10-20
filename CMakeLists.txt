@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}
     src
     src/platform
     src/renderer
@@ -20,7 +21,6 @@ file(GLOB_RECURSE SOURCES
 add_executable(RiskOfRain ${SOURCES})
 
 target_link_libraries(RiskOfRain
-    SDL2
     pthread
     dl
     m
