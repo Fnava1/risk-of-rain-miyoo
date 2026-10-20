@@ -16,3 +16,8 @@ build_mmp/
 .pytest_cache/
 
 *.zip
+
+# Proprietary game assets (Clean-Room BYOD)
+*.win
+*.ogg
+Save.ini
