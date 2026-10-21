@@ -1,16 +1,29 @@
-Risk of Rain (2013) - OnionOS Port Instructions
-================================================
+==============================================================================
+ Risk of Rain (2013) - OnionOS Port Instructions (Miyoo Mini / Mini Plus)
+==============================================================================
 
 To play Risk of Rain on your Miyoo Mini / Miyoo Mini Plus:
 
-1. Obtain your legally purchased copy of Risk of Rain (2013) on PC (Steam or GOG).
-2. Copy the game's data file:
-   - Copy `data.win` from your PC installation into this folder:
-     `/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain/`
-3. (Recommended) If you want maximum performance and zero RAM pressure (< 28 MB textures),
-   run the offline PC optimizer on your PC before transferring:
-     python tools/optimize_ror_assets.py --input <path_to_game> --output <path_to_game_mmp>
-   This will produce `data_mmp.win` which is pre-quantized to 16-bit RGB565 and downsampled.
-   If `data_mmp.win` is present, it will be automatically prioritized!
-4. Insert your MicroSD card into the Miyoo Mini Plus and launch "Risk of Rain"
-   from the Ports menu (Ports -> Action -> Risk of Rain).
+1. Obtain your legally purchased copy of Risk of Rain (2013) on PC (Steam).
+
+2. Copy your game files from PC into this folder on your SD card:
+   `/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain/`
+
+   You can simply copy:
+   - `data.win` (OR `Risk of Rain.exe` — the on-device optimizer will auto-extract it!)
+   - All `.ogg` music files (e.g., `musicStage1.ogg`, `musicBoss1a.ogg`, etc.)
+
+3. FIRST BOOT (AUTONOMOUS SETUP):
+   When you launch "Risk of Rain" on your console for the first time:
+   - An on-screen progress bar (`setup_miyoo`) will automatically appear.
+   - It extracts `data.win` if needed, normalizes Linux audio filename casing,
+     and creates optimal handheld defaults (Graphics: Low, Gamepad: Enabled).
+   - Once complete (100%), the game launches immediately!
+
+4. (Optional - Advanced Offline Texture Quantization):
+   If you want 16-bit RGB565 compressed textures for lowest RAM usage (<28 MB),
+   you can also run the offline Python optimizer on PC:
+     python tools/optimize_ror_assets.py --input <path_to_game>
+   which produces `data_mmp.win`. If present, it is automatically prioritized.
+
+Enjoy Risk of Rain on OnionOS!

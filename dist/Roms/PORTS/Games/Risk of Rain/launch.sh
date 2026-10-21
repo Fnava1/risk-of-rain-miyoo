@@ -113,9 +113,22 @@ export SDL_HIDE_BATTERY=1
 export LD_LIBRARY_PATH="$DIR/libs:/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain/libs:$LD_LIBRARY_PATH"
 echo "[*] LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
-# 5. Check asset presence
+# 5. First-Boot Asset Setup & Verification
 echo "[*] Inspecting files in $DIR:"
 ls -la "$DIR"
+
+if [ ! -f "./.installed" ] || { [ ! -f "./data_mmp.win" ] && [ ! -f "./data.win" ]; }; then
+    if [ -f "./setup_miyoo" ]; then
+        chmod +x ./setup_miyoo 2>/dev/null
+        echo "[*] First boot or missing asset marker detected. Running autonomous setup_miyoo..."
+        ./setup_miyoo
+        SETUP_STATUS=$?
+        if [ $SETUP_STATUS -ne 0 ]; then
+            echo "[!] setup_miyoo failed or aborted with exit code $SETUP_STATUS"
+            exit $SETUP_STATUS
+        fi
+    fi
+fi
 
 if [ ! -f "./data_mmp.win" ] && [ ! -f "./data.win" ]; then
     echo "[!] ERROR: Neither data_mmp.win nor data.win found in $DIR!"
