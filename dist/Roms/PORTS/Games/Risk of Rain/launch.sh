@@ -39,9 +39,37 @@ set_cpu() {
 
 set_cpu $CPU_FREQ
 
-# 2. Isolate audio subsystem: kill audioserver to prevent MI_AO hardware conflict
-echo "[*] Killing audioserver..."
-killall -9 audioserver 2>/dev/null || true
+# 2. Release hardware audio device from audioserver for exclusive ALSA access
+echo "[*] Releasing audio hardware..."
+if [ -f "/mnt/SDCARD/.tmp_update/script/stop_audioserver.sh" ]; then
+    /mnt/SDCARD/.tmp_update/script/stop_audioserver.sh 2>/dev/null || true
+else
+    killall -9 audioserver audioserver.mod 2>/dev/null || true
+fi
+
+# 2.1 Configure ALSA direct output
+echo "[*] Configuring ALSA hardware routing..."
+cat << 'EOF' > /tmp/asound.conf
+pcm.!default {
+    type plug
+    slave.pcm {
+        type hw
+        card 0
+        device 0
+    }
+}
+
+ctl.!default {
+    type hw
+    card 0
+}
+EOF
+
+# Copy asound configuration to home directories and set ALSA env vars
+cp /tmp/asound.conf /tmp/.asoundrc 2>/dev/null || true
+cp /tmp/asound.conf /root/.asoundrc 2>/dev/null || true
+cp /tmp/asound.conf ~/.asoundrc 2>/dev/null || true
+export ASOUNDRC=/tmp/.asoundrc
 
 # 3. Clean exit trap: restore CPU clock, blank framebuffer, restore system audioserver, flush caches
 cleanup() {
@@ -60,18 +88,20 @@ cleanup() {
         echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
     fi
 
-    # 5. Restart OnionOS audioserver
+    # 5. Ensure OnionOS audioserver is restored
     if [ -x "/customer/app/audioserver" ]; then
         /customer/app/audioserver &
     elif command -v audioserver >/dev/null 2>&1; then
         audioserver &
     fi
+
     echo "=== Risk of Rain Launcher Finished ==="
     sync
 }
 trap cleanup EXIT INT TERM HUP
 
-# 4. Export library paths
+# 4. Export library paths and SDL settings
+export SDL_HIDE_BATTERY=1
 export LD_LIBRARY_PATH="$DIR/libs:/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain/libs:$LD_LIBRARY_PATH"
 echo "[*] LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
@@ -89,7 +119,12 @@ echo "[*] Checking binary ./RiskOfRain permissions:"
 ls -la ./RiskOfRain
 chmod +x ./RiskOfRain 2>/dev/null
 
-echo "[*] Executing ./RiskOfRain..."
-./RiskOfRain
+DATA_FILE="./data_mmp.win"
+if [ ! -f "$DATA_FILE" ]; then
+    DATA_FILE="./data.win"
+fi
+
+echo "[*] Executing ./RiskOfRain with $DATA_FILE..."
+./RiskOfRain "$DATA_FILE"
 RR_EXIT=$?
 echo "[*] ./RiskOfRain exited with status: $RR_EXIT"

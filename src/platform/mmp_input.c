@@ -72,18 +72,18 @@ bool mmp_input_poll(MMPInputState *state) {
                     s_current_state.right = pressed;
                     break;
 
-                // Action buttons (Miyoo Mini keypad mappings)
-                case KEY_SPACE:      // 57 (A or Jump)
-                case KEY_LEFTCTRL:   // 29 (A on some drivers)
+                // Action buttons (Miyoo Mini event0: A=KEY_SPACE, B=KEY_LEFTCTRL, Y=KEY_LEFTALT, X=KEY_LEFTSHIFT)
+                case KEY_SPACE:      // 57 (A)
                     s_current_state.a = pressed;
                     break;
-                case KEY_LEFTALT:    // 56 (B or Interact)
+                case KEY_LEFTCTRL:   // 29 (B)
                     s_current_state.b = pressed;
                     break;
-                case KEY_LEFTSHIFT:  // 42 (X or Primary Attack)
+                case KEY_LEFTSHIFT:  // 42 (X)
                     s_current_state.x = pressed;
                     break;
-                case KEY_Z:          // 44 (Y)
+                case KEY_LEFTALT:    // 56 (Y)
+                case KEY_Z:          // 44
                 case KEY_Y:
                     s_current_state.y = pressed;
                     break;

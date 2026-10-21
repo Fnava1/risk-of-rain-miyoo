@@ -4,16 +4,15 @@ set -euo pipefail
 echo "[*] Running OnionOS Port Packaging & Syntax Validator..."
 
 PORT_SHORTCUT="dist/Roms/PORTS/Shortcuts/Action/Risk of Rain.port"
-PORT_ROOT="dist/Roms/PORTS/Risk of Rain.port"
 LAUNCHER="dist/Roms/PORTS/Games/Risk of Rain/launch.sh"
 CONTROLS="dist/Roms/PORTS/Games/Risk of Rain/properties/control.json"
 README="dist/Roms/PORTS/Games/Risk of Rain/PUT_PC_FILES_HERE.txt"
 BOXART="dist/Roms/PORTS/Imgs/Risk of Rain.png"
 BINARY="dist/Roms/PORTS/Games/Risk of Rain/RiskOfRain"
 
-# 1. Verify existence of all standard OnionOS ports files
+# 1. Verify existence of canonical OnionOS shortcut and game files
 test -f "$PORT_SHORTCUT" || { echo "FAIL: $PORT_SHORTCUT does not exist"; exit 1; }
-test -f "$PORT_ROOT" || { echo "FAIL: $PORT_ROOT does not exist"; exit 1; }
+test ! -f "dist/Roms/PORTS/Risk of Rain.port" || { echo "FAIL: dist/Roms/PORTS/Risk of Rain.port must not exist (only Shortcuts allowed)"; exit 1; }
 test -f "$LAUNCHER" || { echo "FAIL: $LAUNCHER does not exist"; exit 1; }
 test -f "$CONTROLS" || { echo "FAIL: $CONTROLS does not exist"; exit 1; }
 test -f "$README" || { echo "FAIL: $README does not exist"; exit 1; }
@@ -22,7 +21,6 @@ test -f "$BINARY" || { echo "FAIL: $BINARY does not exist"; exit 1; }
 
 # 2. Syntax validation
 bash -n "$PORT_SHORTCUT" || { echo "FAIL: Syntax error in $PORT_SHORTCUT"; exit 1; }
-bash -n "$PORT_ROOT" || { echo "FAIL: Syntax error in $PORT_ROOT"; exit 1; }
 bash -n "$LAUNCHER" || { echo "FAIL: Syntax error in $LAUNCHER"; exit 1; }
 
 # 3. Strict check on .port to prevent OnionOS .notfound bug

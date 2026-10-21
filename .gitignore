@@ -21,3 +21,5 @@ build_mmp/
 *.win
 *.ogg
 Save.ini
+
+tmp/

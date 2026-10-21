@@ -25,11 +25,15 @@ def main():
     os.makedirs(os.path.join(GAMES_DIR, "properties"), exist_ok=True)
 
     # 1. Copy binary if built
-    bin_src = os.path.join(PROJECT_ROOT, "RiskOfRain")
+    bin_src = os.path.join(PROJECT_ROOT, "butterscotch", "build_miyoo", "butterscotch")
     bin_dst = os.path.join(GAMES_DIR, "RiskOfRain")
     if os.path.isfile(bin_src):
-        print(f"[*] Staging binary: {bin_src} -> {bin_dst}")
-        shutil.copy2(bin_src, bin_dst)
+        print(f"[*] Staging and stripping binary: {bin_src} -> {bin_dst}")
+        strip_cmd = "/opt/miyoomini-toolchain/bin/arm-linux-gnueabihf-strip"
+        if os.path.isfile(strip_cmd):
+            os.system(f"{strip_cmd} -s '{bin_src}' -o '{bin_dst}'")
+        else:
+            shutil.copy2(bin_src, bin_dst)
     elif not os.path.isfile(bin_dst):
         print("[!] Warning: RiskOfRain binary not found. Build with Docker before final packaging.")
 
