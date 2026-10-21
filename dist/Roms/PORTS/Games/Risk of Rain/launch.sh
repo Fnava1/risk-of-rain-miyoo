@@ -30,10 +30,18 @@ fi
 echo "[*] Hardware: IS_PLUS=$IS_PLUS, Target CPU_FREQ=$CPU_FREQ MHz"
 
 set_cpu() {
+    FREQ_MHZ="$1"
+    FREQ_KHZ="${FREQ_MHZ}000"
     if [ -f "/mnt/SDCARD/.tmp_update/bin/cpuclock" ]; then
-        /mnt/SDCARD/.tmp_update/bin/cpuclock "$1" 2>/dev/null
+        /mnt/SDCARD/.tmp_update/bin/cpuclock "$FREQ_MHZ" 2>/dev/null
     elif command -v cpuclock >/dev/null 2>&1; then
-        cpuclock "$1" 2>/dev/null
+        cpuclock "$FREQ_MHZ" 2>/dev/null
+    fi
+    if [ -f "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor" ]; then
+        echo userspace > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || true
+    fi
+    if [ -f "/sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed" ]; then
+        echo "$FREQ_KHZ" > /sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed 2>/dev/null || true
     fi
 }
 

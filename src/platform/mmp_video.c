@@ -12,6 +12,10 @@
 #include <sys/mman.h>
 #include <linux/fb.h>
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+
 static int s_fb_fd = -1;
 static void *s_fb_ptr = NULL;
 static size_t s_fb_size = 0;
@@ -132,8 +136,96 @@ void mmp_fb_close(void) {
 void mmp_video_flip_180(const uint16_t *src_buffer, int width, int height) {
     if (!src_buffer || !s_fb_ptr) return;
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
     if (s_vinfo.bits_per_pixel == 32) {
-        // 32-bit Framebuffer (XRGB8888 / ARGB8888) - Standard on Miyoo Mini Plus
+        // 32-bit Framebuffer (XRGB8888) - Standard on Miyoo Mini Plus
+        // Optimized 128-bit ARM NEON vectorization processing 8 pixels per batch
+        const uint16x8_t v_mask_g = vdupq_n_u16(0x3F);
+        const uint16x8_t v_mask_b = vdupq_n_u16(0x1F);
+        const uint8x8_t  v_alpha_ff = vdup_n_u8(0xFF);
+
+        for (int y = 0; y < height; y++) {
+            int dst_y = (height - 1) - y;
+            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
+            const uint16_t *src_row = src_buffer + y * width;
+
+            int x = 0;
+            for (; x <= width - 8; x += 8) {
+                // 1. Load 8 consecutive RGB565 pixels sequentially
+                uint16x8_t px = vld1q_u16(src_row + x);
+
+                // 2. 180-degree horizontal inversion: reverse 8 pixels across lanes
+                uint16x4_t hi_rev = vrev64_u16(vget_high_u16(px));
+                uint16x4_t lo_rev = vrev64_u16(vget_low_u16(px));
+                uint16x8_t px_rev = vcombine_u16(hi_rev, lo_rev);
+
+                // 3. Channel separation from reversed pixels
+                uint16x8_t r5 = vshrq_n_u16(px_rev, 11);
+                uint16x8_t g6 = vandq_u16(vshrq_n_u16(px_rev, 5), v_mask_g);
+                uint16x8_t b5 = vandq_u16(px_rev, v_mask_b);
+
+                // 4. Bit-exact 8-bit channel expansion
+                uint16x8_t r8_16 = vorrq_u16(vshlq_n_u16(r5, 3), vshrq_n_u16(r5, 2));
+                uint16x8_t g8_16 = vorrq_u16(vshlq_n_u16(g6, 2), vshrq_n_u16(g6, 4));
+                uint16x8_t b8_16 = vorrq_u16(vshlq_n_u16(b5, 3), vshrq_n_u16(b5, 2));
+
+                // 5. Narrow to uint8x8
+                uint8x8_t r8 = vmovn_u16(r8_16);
+                uint8x8_t g8 = vmovn_u16(g8_16);
+                uint8x8_t b8 = vmovn_u16(b8_16);
+
+                // 6. Interleave as B, G, R, A (0xAARRGGBB in little-endian uint32_t)
+                uint8x8x4_t bgra;
+                bgra.val[0] = b8;
+                bgra.val[1] = g8;
+                bgra.val[2] = r8;
+                bgra.val[3] = v_alpha_ff;
+
+                // 7. Write 8 pixels sequentially backwards
+                int dst_x = (width - 8) - x;
+                vst4_u8((uint8_t *)(dst_row + dst_x), bgra);
+            }
+
+            // Scalar remainder
+            for (; x < width; x++) {
+                int dst_x = (width - 1) - x;
+                uint16_t px = src_row[x];
+                uint32_t r = (px >> 11) & 0x1F;
+                uint32_t g = (px >> 5) & 0x3F;
+                uint32_t b = px & 0x1F;
+                uint8_t r8 = (r * 527 + 23) >> 6;
+                uint8_t g8 = (g * 259 + 33) >> 6;
+                uint8_t b8 = (b * 527 + 23) >> 6;
+                dst_row[dst_x] = (0xFF << 24) | (r8 << 16) | (g8 << 8) | b8;
+            }
+        }
+    } else {
+        // 16-bit Framebuffer (RGB565) - Direct 128-bit vector reversal
+        for (int y = 0; y < height; y++) {
+            int dst_y = (height - 1) - y;
+            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
+            const uint16_t *src_row = src_buffer + y * width;
+
+            int x = 0;
+            for (; x <= width - 8; x += 8) {
+                uint16x8_t px = vld1q_u16(src_row + x);
+                uint16x4_t hi_rev = vrev64_u16(vget_high_u16(px));
+                uint16x4_t lo_rev = vrev64_u16(vget_low_u16(px));
+                uint16x8_t px_rev = vcombine_u16(hi_rev, lo_rev);
+
+                int dst_x = (width - 8) - x;
+                vst1q_u16(dst_row + dst_x, px_rev);
+            }
+
+            for (; x < width; x++) {
+                int dst_x = (width - 1) - x;
+                dst_row[dst_x] = src_row[x];
+            }
+        }
+    }
+#else
+    if (s_vinfo.bits_per_pixel == 32) {
+        // 32-bit Framebuffer (XRGB8888) - Scalar fallback
         for (int y = 0; y < height; y++) {
             int dst_y = (height - 1) - y;
             uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
@@ -151,7 +243,7 @@ void mmp_video_flip_180(const uint16_t *src_buffer, int width, int height) {
             }
         }
     } else {
-        // 16-bit Framebuffer (RGB565)
+        // 16-bit Framebuffer (RGB565) - Scalar fallback
         for (int y = 0; y < height; y++) {
             int dst_y = (height - 1) - y;
             uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
@@ -162,4 +254,5 @@ void mmp_video_flip_180(const uint16_t *src_buffer, int width, int height) {
             }
         }
     }
+#endif
 }
