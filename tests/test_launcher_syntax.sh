@@ -30,7 +30,7 @@ if [ "$COUNT" -ne 1 ]; then
     echo "FAIL: GameDataFile occurs $COUNT times in $PORT_SHORTCUT (must be exactly 1)"; exit 1;
 fi
 
-grep -q '^GameDataFile="data\*\.win"' "$PORT_SHORTCUT" || { echo "FAIL: Invalid GameDataFile wildcard pattern in .port"; exit 1; }
+grep -q '^GameDataFile="launch\.sh"' "$PORT_SHORTCUT" || { echo "FAIL: Invalid GameDataFile pattern in .port (must be launch.sh for autonomous first boot)"; exit 1; }
 grep -q 'launch_standalone\.sh' "$PORT_SHORTCUT" || { echo "FAIL: launch_standalone.sh missing in .port"; exit 1; }
 grep -q 'Games/Risk of Rain' "$PORT_SHORTCUT" || { echo "FAIL: Missing Games/Risk of Rain relative lookup in .port"; exit 1; }
 

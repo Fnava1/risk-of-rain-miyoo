@@ -6,7 +6,7 @@ To play Risk of Rain on your Miyoo Mini / Miyoo Mini Plus:
 
 1. Obtain your legally purchased copy of Risk of Rain (2013) on PC (Steam).
 
-2. Copy your game files from PC into this folder on your SD card:
+2. Copy your game files from PC into this folder on your MicroSD card:
    `/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain/`
 
    You can simply copy:
@@ -20,10 +20,5 @@ To play Risk of Rain on your Miyoo Mini / Miyoo Mini Plus:
      and creates optimal handheld defaults (Graphics: Low, Gamepad: Enabled).
    - Once complete (100%), the game launches immediately!
 
-4. (Optional - Advanced Offline Texture Quantization):
-   If you want 16-bit RGB565 compressed textures for lowest RAM usage (<28 MB),
-   you can also run the offline Python optimizer on PC:
-     python tools/optimize_ror_assets.py --input <path_to_game>
-   which produces `data_mmp.win`. If present, it is automatically prioritized.
-
+No PC scripts or manual conversions are required.
 Enjoy Risk of Rain on OnionOS!

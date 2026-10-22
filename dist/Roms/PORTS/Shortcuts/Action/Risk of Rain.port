@@ -2,7 +2,7 @@
 GameName="Risk of Rain"
 GameDir="Risk of Rain"
 GameExecutable="launch.sh"
-GameDataFile="data*.win"
+GameDataFile="launch.sh"
 KillAudioserver=1
 PerformanceMode=0
 Arguments=""
