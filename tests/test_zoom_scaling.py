@@ -89,6 +89,29 @@ class TestZoomAndLogging(unittest.TestCase):
         for room in combat_rooms:
             self.assertTrue(is_gameplay_room(room), f"{room} should be recognized as a combat room")
 
+    def test_proposal1_mapping_bounds(self):
+        """Proposal 1: Every destination pixel across 640x480 must map cleanly to 512x384."""
+        src_w, src_h = 512, 384
+        dst_w, dst_h = 640, 480
+
+        # Horizontal mapping
+        for x in range(dst_w):
+            x_log = (dst_w - 1) - x
+            pos = (x_log * (src_w - 1)) / float(dst_w - 1)
+            s0 = int(pos)
+            s1 = min(src_w - 1, s0 + 1)
+            self.assertTrue(0 <= s0 < src_w, f"s0 out of bounds: {s0}")
+            self.assertTrue(0 <= s1 < src_w, f"s1 out of bounds: {s1}")
+
+        # Vertical mapping
+        for y in range(dst_h):
+            y_log = (dst_h - 1) - y
+            pos = (y_log * (src_h - 1)) / float(dst_h - 1)
+            s0 = int(pos)
+            s1 = min(src_h - 1, s0 + 1)
+            self.assertTrue(0 <= s0 < src_h, f"s0 out of bounds: {s0}")
+            self.assertTrue(0 <= s1 < src_h, f"s1 out of bounds: {s1}")
+
 
 if __name__ == "__main__":
     unittest.main()
