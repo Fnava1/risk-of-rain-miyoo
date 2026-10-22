@@ -7,11 +7,9 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-# Enable persistent execution log for debugging
-LOG_FILE="$DIR/launch.log"
-exec > "$LOG_FILE" 2>&1
-echo "=== Risk of Rain Launcher Started ==="
-date
+# Disable logging to avoid MicroSD flash wear and I/O latency
+rm -f "$DIR/launch.log" 2>/dev/null
+exec > /dev/null 2>&1
 
 # 1. Dynamic Hardware Detection & Safe Overclocking
 # Miyoo Mini Plus: 1800 MHz (AXP223 PMIC, large battery, WiFi present)
@@ -103,7 +101,6 @@ cleanup() {
         audioserver &
     fi
 
-    echo "=== Risk of Rain Launcher Finished ==="
     sync
 }
 trap cleanup EXIT INT TERM HUP
