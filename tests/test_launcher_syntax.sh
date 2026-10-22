@@ -36,6 +36,8 @@ grep -q 'Games/Risk of Rain' "$PORT_SHORTCUT" || { echo "FAIL: Missing Games/Ris
 
 # 4. Check launch.sh for dynamic hardware detection, overclocking, and resilient exit trap
 grep -q 'IS_PLUS' "$LAUNCHER" || { echo "FAIL: launch.sh missing hardware detection"; exit 1; }
+grep -q '/tmp/deviceModel' "$LAUNCHER" || { echo "FAIL: launch.sh missing OnionOS /tmp/deviceModel detection"; exit 1; }
+grep -q '/customer/app/axp_test' "$LAUNCHER" || { echo "FAIL: launch.sh missing /customer/app/axp_test detection"; exit 1; }
 grep -q 'CPU_FREQ=1800' "$LAUNCHER" || { echo "FAIL: launch.sh missing 1800 MHz MMP target"; exit 1; }
 grep -q 'CPU_FREQ=1400' "$LAUNCHER" || { echo "FAIL: launch.sh missing 1400 MHz MM target"; exit 1; }
 grep -q 'set_cpu 1200' "$LAUNCHER" || { echo "FAIL: launch.sh missing clock restoration to 1200"; exit 1; }
@@ -46,8 +48,14 @@ grep -q 'dd if=/dev/zero of=/dev/fb0' "$LAUNCHER" || { echo "FAIL: launch.sh mis
 grep -q 'sync' "$LAUNCHER" || { echo "FAIL: launch.sh missing sync buffer flush"; exit 1; }
 
 # 5. Check controls mapping JSON
-grep -q '"X": "Primary Attack"' "$CONTROLS" || { echo "FAIL: control.json missing X primary attack"; exit 1; }
-grep -q '"A": "Jump"' "$CONTROLS" || { echo "FAIL: control.json missing A jump"; exit 1; }
+grep -q '"Y": "Ability 1 (Basic)"' "$CONTROLS" || { echo "FAIL: control.json missing Y ability 1"; exit 1; }
+grep -q '"X": "Swap Item"' "$CONTROLS" || { echo "FAIL: control.json missing X swap item"; exit 1; }
+grep -q '"A": "Enter / Confirm / Buy"' "$CONTROLS" || { echo "FAIL: control.json missing A enter/confirm"; exit 1; }
+grep -q '"B": "Jump"' "$CONTROLS" || { echo "FAIL: control.json missing B jump"; exit 1; }
+grep -q '"L1": "Ability 2"' "$CONTROLS" || { echo "FAIL: control.json missing L1 ability 2"; exit 1; }
+grep -q '"R1": "Ability 3"' "$CONTROLS" || { echo "FAIL: control.json missing R1 ability 3"; exit 1; }
+grep -q '"R2": "Ability 4"' "$CONTROLS" || { echo "FAIL: control.json missing R2 ability 4"; exit 1; }
+grep -q '"L2": "Use Equipment Item"' "$CONTROLS" || { echo "FAIL: control.json missing L2 item"; exit 1; }
 
 echo "[+] OnionOS port packaging syntax test PASSED."
 exit 0

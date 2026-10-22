@@ -11,11 +11,26 @@ cd "$DIR"
 rm -f "$DIR/launch.log" 2>/dev/null
 exec > /dev/null 2>&1
 
-# 1. Dynamic Hardware Detection & Safe Overclocking
-# Miyoo Mini Plus: 1800 MHz (AXP223 PMIC, large battery, WiFi present)
-# Miyoo Mini (v1/v2/v3/v4 non-Plus): 1400 MHz (conservative ceiling avoiding PMIC panic)
+# 1. Infallible Dynamic Hardware Detection & Safe Overclocking
+# Miyoo Mini Plus (MY354): 1800 MHz (AXP223 PMIC, 3000 mAh battery, WiFi hardware)
+# Miyoo Mini (MY282/MY283 v1-v4): 1400 MHz (conservative ceiling avoiding PMIC panic)
+#
+# CRITICAL RULE: Must not rely solely on /sys/class/net/wlan0.
+# When WiFi is disabled in OnionOS settings, /customer/app/axp_test wifioff cuts
+# power to the RTL8188FU USB bus, causing wlan0 to vanish from sysfs.
 IS_PLUS=0
-if [ -d /sys/class/net/wlan0 ] || grep -qi "plus" /proc/cmdline 2>/dev/null; then
+
+# Tier 1: OnionOS authoritative hardware ID in RAM (/tmp/deviceModel)
+if [ -f "/tmp/deviceModel" ]; then
+    [ "$(cat /tmp/deviceModel 2>/dev/null)" = "354" ] && IS_PLUS=1
+# Tier 2: Factory NAND PMIC test binary present exclusively on Miyoo Mini Plus
+elif [ -f "/customer/app/axp_test" ]; then
+    IS_PLUS=1
+# Tier 3: Direct I2C bus inquiry: AXP223 at address 0x34 on /dev/i2c-1 answers only on MMP
+elif [ -x "/mnt/SDCARD/.tmp_update/bin/axp" ] && /mnt/SDCARD/.tmp_update/bin/axp 0 >/dev/null 2>&1; then
+    IS_PLUS=1
+# Tier 4: Fallback to U-Boot boot arguments or active network interface
+elif grep -qi "plus" /proc/cmdline 2>/dev/null || [ -d "/sys/class/net/wlan0" ]; then
     IS_PLUS=1
 fi
 
