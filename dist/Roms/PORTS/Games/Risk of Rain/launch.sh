@@ -39,6 +39,7 @@ if [ "$IS_PLUS" -eq 1 ]; then
 else
     CPU_FREQ=1400
 fi
+export TARGET_CPU_MHZ="$CPU_FREQ"
 
 echo "[*] Hardware: IS_PLUS=$IS_PLUS, Target CPU_FREQ=$CPU_FREQ MHz"
 
