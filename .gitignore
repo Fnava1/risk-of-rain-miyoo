@@ -1,4 +1,6 @@
 .superpowers/
+.claude/
+.trail/
 __pycache__/
 *.pyc
 *.o
