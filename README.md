@@ -7,38 +7,17 @@ Port of **Risk of Rain (2013)** for the **Miyoo Mini Plus** running OnionOS. Pow
 
 ---
 
-## Highlights & Technical Optimizations
+## Handheld Zoom
 
-* **Asynchronous Dual-Core Presentation Pipeline:**
-  Rendering execution runs uninterrupted on **Core 0** while the 180° display rotation and scaling blit to `/dev/fb0` run asynchronously on **Core 1** with double-buffered zero-copy synchronization.
-* **Precomputed Sharp-Bilinear Hardware Scaler:**
-  Handheld zoom modes (**1.25X** at $512 \times 384$ and **1.5X** at $426 \times 320$) use precomputed lookup tables (LUT) with a **Sharp Bilinear** kernel. Keeps 100% solid, crisp pixel-art cores while smoothing the 1-pixel boundary zone to completely prevent blur and scrolling shimmer, with **0% runtime CPU cost**.
-* **Tri-State Handheld Zoom (In-Game Menu):**
-  Seamlessly switch between **1.0X** (640x480 full view), **1.25X** (512x384 handheld zoom), and **1.5X** (426x320 close-up combat) directly from the in-game *Video Options* menu. Settings automatically persist in `Prefs.ini`.
-* **$O(1)$ SpatialGrid Collision Broadphase:**
-  Replaced GameMaker's $O(N)$ linear instance collision scans with a 128px spatial hash grid, eliminating late-game CPU spikes during massive enemy swarms.
-* **Rasterizer Fast-Paths:**
-  * Dual-pixel packed 32-bit blending for alpha rectangle primitives (water bodies, environmental hazard zones).
-  * Integer scanline midpoint LUT for small circles ($r \le 6$) replacing costly trigonometric math.
-  * Direct C implementation of `instance_nearest_var` bypassing heap allocations for coin and orb magnet pickups.
-  * LRU-capped floating damage numbers (`oEfDamage`, max 20 instances) to prevent late-game object pool exhaustion.
-* **High-Efficiency Audio Engine:**
-  Tremor integer-only Ogg Vorbis decoder feeding a 128 KB lock-free ring-buffer via an optimized SDL-1.2 sound backend.
-* **Zero-Logging Launcher:**
-  Eliminated disk I/O bottlenecks during gameplay by suppressing verbose terminal logging, preventing micro-stutters and extending SD card lifespan.
+To make the gaming experience more comfortable, 1.25x and 1.5x zoom modes have been added to the game options; you can adjust them at any time in **Audio and Video --> Zoom Scale**.
+This only affects gameplay, the main menu and character selection screen are not affected. Additionally, performance is boosted at higher zoom levels.
 
----
+## Installation (Bring Your Own Data)
 
-## Installation (Players — Bring Your Own Data)
-
-This project strictly adheres to a **Clean-Room BYOD (Bring Your Own Data)** policy. No proprietary copyrighted game assets are included in this repository or release packages. You must provide your own legally purchased copy of Risk of Rain (2013) from Steam or GOG.
-
-### Requirements
-* Miyoo Mini or Miyoo Mini Plus with **OnionOS v4.2+** installed.
-* A legally owned copy of **Risk of Rain (2013)** (Steam or GOG, PC version).
+No proprietary copyrighted game assets are included in this repository or release packages. You must provide your own legally purchased copy of Risk of Rain (2013) from Steam or GOG.
 
 ### Setup Instructions
-1. Download the latest `Risk_of_Rain_MiyooMiniPlus.zip` from the [Releases](https://github.com/Fnava1/risk-of-rain-miyoo/releases) section.
+1. Download the latest Release from the [Releases](https://github.com/Fnava1/risk-of-rain-miyoo/releases) section.
 2. Extract the archive directly to the root of your Miyoo Mini SD card. It will populate:
    ```text
    SDCARD/
@@ -120,27 +99,6 @@ The project includes an extensive suite of **42 automated regression tests** cov
 
 ```bash
 python -m unittest discover tests
-```
-
----
-
-## Architecture Overview
-
-```mermaid
-flowchart TD
-    GML[Risk of Rain Bytecode\ndata_mmp.win] --> VM[Butterscotch GMS 1.4 VM]
-    VM --> SG[SpatialGrid O1 Collision Engine]
-    VM --> SW[Custom Software Renderer\nsw_renderer.c]
-    
-    subgraph Core0 [Core 0: Game & Render Loop]
-        SW --> BB[Double-Buffered 16-bit Backbuffer\n512x384 / 426x320 / 640x480]
-    end
-    
-    subgraph Core1 [Core 1: Hardware Presentation Thread]
-        BB --> LUT[Precomputed Sharp-Bilinear LUT]
-        LUT --> BLIT[180-deg Flip & Scaler\nNEON SIMD Vectorized]
-        BLIT --> FB["/dev/fb0 Direct Framebuffer\n640x480 32-bit / 16-bit"]
-    end
 ```
 
 ---
