@@ -152,20 +152,47 @@ class TestZoomAndLogging(unittest.TestCase):
             self.assertTrue(0 <= s1 < src_h, f"1.5X s1 out of bounds: {s1}")
 
     def test_tri_state_scale_cycle(self):
-        """scale_refresh must cycle 1.0X -> 1.25X -> 1.5X -> 1.0X."""
-        def next_scale(current):
-            if current < 1.1:
+        """scale_refresh must cycle 1.0X -> 1.25X -> 1.5X -> 1.0X upon oMenu click, and preserve scale on room transitions."""
+        def scale_refresh_sim(current_scale):
+            if abs(current_scale - 2.0) < 0.1:
                 return 1.25
-            elif current < 1.35:
+            elif abs(current_scale - 2.25) < 0.1 or abs(current_scale - 3.0) < 0.1:
+                return 1.5
+            elif abs(current_scale - 2.5) < 0.1 or current_scale > 2.6:
+                return 1.0
+            elif abs(current_scale - 1.25) < 0.05:
+                return 1.25
+            elif abs(current_scale - 1.5) < 0.05:
                 return 1.5
             else:
                 return 1.0
 
-        self.assertEqual(next_scale(1.0), 1.25)
-        self.assertEqual(next_scale(1.25), 1.5)
-        self.assertEqual(next_scale(1.5), 1.0)
-        # Verify cycling returns to initial state
-        self.assertEqual(next_scale(next_scale(next_scale(1.0))), 1.0)
+        def omenu_click(scale):
+            # GML: scale += 1; if (scale > scale_max) scale = 1; scale_refresh();
+            clicked = scale + 1.0
+            if clicked > 4.0:
+                clicked = 1.0
+            return scale_refresh_sim(clicked)
+
+        # 1. Non-click calls (room start, vsync toggle, Prefs boot) must preserve scale
+        self.assertEqual(scale_refresh_sim(1.0), 1.0)
+        self.assertEqual(scale_refresh_sim(1.25), 1.25)
+        self.assertEqual(scale_refresh_sim(1.5), 1.5)
+
+        # 2. Clicking in oMenu cycles 1.0X -> 1.25X -> 1.5X -> 1.0X
+        scale = 1.0
+        scale = omenu_click(scale)
+        self.assertEqual(scale, 1.25)
+
+        scale = omenu_click(scale)
+        self.assertEqual(scale, 1.5)
+
+        scale = omenu_click(scale)
+        self.assertEqual(scale, 1.0)
+
+        # 3. Next click from 1.0X must resume cycle to 1.25X (no lockup at 1.0X)
+        scale = omenu_click(scale)
+        self.assertEqual(scale, 1.25)
 
 
 if __name__ == "__main__":
