@@ -47,11 +47,11 @@ def main():
     os.makedirs(os.path.join(GAMES_DIR, "properties"), exist_ok=True)
     os.makedirs(os.path.join(GAMES_DIR, "libs"), exist_ok=True)
 
-    # 1. Verify and stage binaries if built in butterscotch
-    bin_src = os.path.join(PROJECT_ROOT, "butterscotch", "build_miyoo", "butterscotch")
+    # 1. Verify RiskOfRain binary in distribution
     bin_dst = os.path.join(GAMES_DIR, "RiskOfRain")
-    if os.path.isfile(bin_src):
-        if not os.path.isfile(bin_dst) or os.path.getmtime(bin_src) > os.path.getmtime(bin_dst):
+    if not os.path.isfile(bin_dst):
+        bin_src = os.path.join(PROJECT_ROOT, "butterscotch", "build_miyoo", "butterscotch")
+        if os.path.isfile(bin_src):
             print(f"[*] Staging binary: {bin_src} -> {bin_dst}")
             shutil.copy2(bin_src, bin_dst)
 
