@@ -1,9 +1,9 @@
-# Risk of Rain (2013) — Miyoo Mini Plus Native Port
+# Risk of Rain (2013) — Miyoo Mini Plus Port
 
 [![Engine](https://img.shields.io/badge/Engine-Butterscotch%20GMS1.4-orange.svg)](https://github.com/ButterscotchRunner/Butterscotch)
 [![Clean-Room](https://img.shields.io/badge/Policy-Clean--Room%20BYOD-green.svg)]()
 
-Port of **Risk of Rain (2013)** for the **Miyoo Mini Plus** running OnionOS. Powered by a customized build of the [**Butterscotch**](https://github.com/cobaltgit/Butterscotch) GameMaker: Studio 1.4 runtime.
+Port of **Risk of Rain (2013)** for the **Miyoo Mini Plus** running OnionOS. Powered by a customized build of the [**Butterscotch**](https://github.com/cobaltgit/Butterscotch) GameMaker: Studio 1.4 runtime. Untested on the original Miyoo Mini.
 
 ---
 
