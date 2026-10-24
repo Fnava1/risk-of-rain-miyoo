@@ -41,7 +41,7 @@ This project strictly adheres to a **Clean-Room BYOD (Bring Your Own Data)** pol
 * A legally owned copy of **Risk of Rain (2013)** (Steam or GOG, PC version).
 
 ### Setup Instructions
-1. Download the latest `Risk_of_Rain_MiyooMiniPlus.zip` from the [Releases](https://github.com/) section.
+1. Download the latest `Risk_of_Rain_MiyooMiniPlus.zip` from the [Releases](https://github.com/Fnava1/risk-of-rain-miyoo/releases) section.
 2. Extract the archive directly to the root of your Miyoo Mini SD card. It will populate:
    ```text
    SDCARD/
@@ -95,10 +95,10 @@ This project strictly adheres to a **Clean-Room BYOD (Bring Your Own Data)** pol
 
 ### Compiling the Engine
 
-1. Clone the repository with submodules:
+1. Clone the repository:
    ```bash
-   git clone --recursive https://github.com/<your-username>/RiskOfRain-MiyooMiniPlus.git
-   cd RiskOfRain-MiyooMiniPlus
+   git clone https://github.com/Fnava1/risk-of-rain-miyoo.git
+   cd risk-of-rain-miyoo
    ```
 
 2. Build using the Miyoo cross-compilation Docker container:

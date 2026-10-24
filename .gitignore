@@ -17,6 +17,15 @@ RiskOfRain
 build_mmp/
 .pytest_cache/
 
+# Build artifacts
+build*/
+butterscotch/build*/
+butterscotch/.cache/
+butterscotch/CMakeUserPresets.json
+butterscotch/compat/config.mk
+butterscotch/.devcontainer/
+butterscotch/*.log
+
 *.zip
 
 # Proprietary game assets (Clean-Room BYOD)

@@ -1,0 +1,151 @@
+#include "args.h"
+#include <loop.h>
+#include <getopt.h>
+#include <signal.h>
+#include <unistd.h>
+#include <execinfo.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "runner.h"
+#include "vm.h"
+
+/* For SDL_main */
+#if defined(USE_SDL1)
+#include <SDL/SDL_main.h>
+#elif defined(USE_SDL2)
+#include <SDL2/SDL_main.h>
+#elif defined(USE_SDL3)
+#include <SDL3/SDL_main.h>
+#endif
+
+static bool logColour;
+
+void platformLog(const logType type, const char *format, va_list va) {
+    FILE *out = stderr;
+    const char* colourPrefix = ANSI_COLOUR_CODE_RESET;
+    const char* textPrefix = "";
+    switch (type) {
+        case LOG_TYPE_NORMAL:
+            out = stdout;
+            break;
+        case LOG_TYPE_WARNING:
+            colourPrefix = ANSI_COLOUR_CODE_BOLD_YELLOW;
+            textPrefix = "Warning: ";
+            break;
+        case LOG_TYPE_ERROR:
+            colourPrefix = ANSI_COLOUR_CODE_BOLD_RED;
+            textPrefix = "Error: ";
+            break;
+        case LOG_TYPE_DEBUG:
+            colourPrefix = ANSI_COLOUR_CODE_BOLD_PURPLE;
+            textPrefix = "Debug: ";
+            break;
+    }
+
+    if (logColour) fputs(colourPrefix, out);
+    fputs(textPrefix, out);
+    if (logColour) fputs(ANSI_COLOUR_CODE_RESET, out);
+    vfprintf(out, format, va);
+    fflush(out);
+}
+
+static void miyoo_crash_handler(int sig, siginfo_t* info, void* ucontext) {
+    (void)ucontext;
+    // Reset signals to default to prevent infinite loops if something inside the handler crashes
+    signal(SIGSEGV, SIG_DFL);
+    signal(SIGBUS, SIG_DFL);
+    signal(SIGABRT, SIG_DFL);
+    signal(SIGFPE, SIG_DFL);
+    signal(SIGILL, SIG_DFL);
+
+    const char* signame = "UNKNOWN";
+    switch (sig) {
+        case SIGSEGV: signame = "SIGSEGV (Segmentation Fault)"; break;
+        case SIGBUS:  signame = "SIGBUS (Bus Error)"; break;
+        case SIGABRT: signame = "SIGABRT (Abort / Assertion Failure)"; break;
+        case SIGFPE:  signame = "SIGFPE (Floating Point Exception)"; break;
+        case SIGILL:  signame = "SIGILL (Illegal Instruction)"; break;
+    }
+
+    fprintf(stderr, "\n=======================================================\n");
+    fprintf(stderr, "[FATAL CRASH] Caught signal %d: %s\n", sig, signame);
+    if (info) {
+        fprintf(stderr, "[FATAL CRASH] Faulting memory address: %p\n", info->si_addr);
+    }
+
+    if (g_active_runner != NULL) {
+        Runner* r = g_active_runner;
+        fprintf(stderr, "[FATAL CRASH] Engine Frame: %u, Room Index: %d\n", r->frameCount, r->currentRoomIndex);
+        if (r->vmContext != NULL) {
+            VMContext* ctx = r->vmContext;
+            fprintf(stderr, "[FATAL CRASH] Active GML Script/Code: %s\n", ctx->currentCodeName ? ctx->currentCodeName : "(null)");
+            fprintf(stderr, "[FATAL CRASH] Instruction offset: 0x%X (%u) / code length: %u\n", ctx->ip, ctx->ip, ctx->codeEnd);
+            if (ctx->currentInstance != NULL) {
+                fprintf(stderr, "[FATAL CRASH] Active Instance ID: %d, Object Index: %d\n",
+                        ctx->currentInstance->instanceId, ctx->currentInstance->objectIndex);
+            }
+            if (ctx->otherInstance != NULL) {
+                fprintf(stderr, "[FATAL CRASH] 'other' Instance ID: %d, Object Index: %d\n",
+                        ctx->otherInstance->instanceId, ctx->otherInstance->objectIndex);
+            }
+            if (ctx->callDepth > 0 && ctx->callStack != NULL) {
+                fprintf(stderr, "[FATAL CRASH] GML Call Stack (depth %d):\n", ctx->callDepth);
+                CallFrame* frame = ctx->callStack;
+                int depth = 0;
+                while (frame != NULL && depth < 16) {
+                    fprintf(stderr, "  #%d: %s at offset 0x%X (%u)\n",
+                            depth++,
+                            frame->savedCodeName ? frame->savedCodeName : "(unknown)",
+                            frame->savedIP, frame->savedIP);
+                    frame = frame->parent;
+                }
+            }
+        }
+    }
+
+    fprintf(stderr, "[FATAL CRASH] Native C Backtrace:\n");
+    void* callstack[32];
+    int frames = backtrace(callstack, 32);
+    backtrace_symbols_fd(callstack, frames, fileno(stderr));
+
+    fprintf(stderr, "=======================================================\n");
+    fflush(stderr);
+    fflush(stdout);
+    sync();
+
+    // Re-raise signal to terminate
+    raise(sig);
+}
+
+static void install_crash_handler(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = miyoo_crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    sigemptyset(&sa.sa_mask);
+
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGABRT, &sa, NULL);
+    sigaction(SIGFPE, &sa, NULL);
+    sigaction(SIGILL, &sa, NULL);
+}
+
+int main(int argc, char* argv[]) {
+    setbuf(stderr, NULL);
+    setbuf(stdout, NULL);
+
+    install_crash_handler();
+
+    CommandLineArgs args;
+    parseCommandLineArgs(&args, argc, argv);
+    logColour = !args.disableLogColours;
+
+    logInfo("[Runner] Butterscotch starting with diagnostics and crash handler\n");
+
+    int ret = loop(args, argv[0]);
+    freeCommandLineArgs(&args);
+    return ret;
+}
