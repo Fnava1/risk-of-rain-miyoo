@@ -7,9 +7,15 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-# Disable logging to avoid MicroSD flash wear and I/O latency
-rm -f "$DIR/launch.log" 2>/dev/null
-exec > /dev/null 2>&1
+# Enable logging for diagnostics and crash detection
+LOG_FILE="$DIR/launch.log"
+rm -f "$LOG_FILE" 2>/dev/null
+exec > "$LOG_FILE" 2>&1
+echo "======================================================="
+echo "=== Risk of Rain Native Launcher on Miyoo Mini ==="
+echo "Date: $(date 2>/dev/null)"
+echo "Kernel: $(uname -a 2>/dev/null)"
+echo "======================================================="
 
 # 1. Infallible Dynamic Hardware Detection & Safe Overclocking
 # Miyoo Mini Plus (MY354): 1800 MHz (AXP223 PMIC, 3000 mAh battery, WiFi hardware)
