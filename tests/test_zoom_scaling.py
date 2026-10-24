@@ -194,6 +194,23 @@ class TestZoomAndLogging(unittest.TestCase):
         scale = omenu_click(scale)
         self.assertEqual(scale, 1.25)
 
+    def test_miyoo_1_5x_hardware_scaler_implemented(self):
+        """miyoo.c must implement 426x320 hardware scaler and dispatch tw == 426 in flip worker."""
+        miyoo_c = os.path.join(REPO_ROOT, "butterscotch", "src", "backends", "miyoo.c")
+        self.assertTrue(os.path.exists(miyoo_c), f"Missing {miyoo_c}")
+        with open(miyoo_c, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("mmp_video_flip_180_scale_426_to_640", code, "miyoo.c must implement mmp_video_flip_180_scale_426_to_640")
+        self.assertIn("mmp_scale_init_tables_426", code, "miyoo.c must implement mmp_scale_init_tables_426")
+        self.assertIn("tw == 426", code, "mmp_flip_worker must dispatch tw == 426")
+
+        loop_c = os.path.join(REPO_ROOT, "butterscotch", "src", "loop.c")
+        with open(loop_c, "r", encoding="utf-8") as f:
+            lcode = f.read()
+        self.assertIn("renderW = isCombatZoom ? ((runner->handheldScale > 1.35f) ? 426 : 512) : fbWidth", lcode,
+                      "loop.c must set renderW to 426 for 1.5X zoom")
+
 
 if __name__ == "__main__":
     unittest.main()
