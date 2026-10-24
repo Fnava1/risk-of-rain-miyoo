@@ -1,12 +1,9 @@
 # Risk of Rain (2013) — Miyoo Mini Plus Native Port
 
-[![Platform](https://img.shields.io/badge/Platform-Miyoo%20Mini%2B%20%7C%20OnionOS-blue.svg)](https://github.com/OnionUI/Onion)
 [![Engine](https://img.shields.io/badge/Engine-Butterscotch%20GMS1.4-orange.svg)](https://github.com/ButterscotchRunner/Butterscotch)
-[![Target FPS](https://img.shields.io/badge/Target%20FPS-60%20FPS-brightgreen.svg)]()
 [![Clean-Room](https://img.shields.io/badge/Policy-Clean--Room%20BYOD-green.svg)]()
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Native embedded C/C++ port of the classic **Risk of Rain (2013)** for the **Miyoo Mini** and **Miyoo Mini Plus** running [OnionOS](https://github.com/OnionUI/Onion). Powered by a heavily customized and optimized build of the **Butterscotch** GameMaker: Studio 1.4 runtime, specially engineered for the SigmaStar SSD202D dual-core ARM Cortex-A7 SoC.
+Port of **Risk of Rain (2013)** for the **Miyoo Mini Plus** running OnionOS. Powered by a customized build of the [**Butterscotch**](https://github.com/cobaltgit/Butterscotch) GameMaker: Studio 1.4 runtime.
 
 ---
 
