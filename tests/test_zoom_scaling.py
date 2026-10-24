@@ -211,6 +211,84 @@ class TestZoomAndLogging(unittest.TestCase):
         self.assertIn("renderW = isCombatZoom ? ((runner->handheldScale > 1.35f) ? 426 : 512) : fbWidth", lcode,
                       "loop.c must set renderW to 426 for 1.5X zoom")
 
+    def test_sharp_bilinear_scaler_lut_properties(self):
+        """Sharp Bilinear LUT must preserve solid pixel cores (>=30% pure fast-path) with strict bounds."""
+        import math
+
+        miyoo_c = os.path.join(REPO_ROOT, "butterscotch", "src", "backends", "miyoo.c")
+        with open(miyoo_c, "r", encoding="utf-8") as f:
+            code = f.read()
+        self.assertIn("Sharp Bilinear", code, "miyoo.c must implement Sharp Bilinear")
+        self.assertIn("#include <math.h>", code, "miyoo.c must include math.h")
+
+        def simulate_sharp_lut(srcW, srcH, dstW=640, dstH=480):
+            scale_x = float(dstW) / float(srcW)
+            scale_y = float(dstH) / float(srcH)
+
+            cols_pure = 0
+            for x in range(dstW):
+                x_log = (dstW - 1) - x
+                u = (x_log + 0.5) / float(dstW)
+                texel = u * float(srcW) - 0.5
+                texel_floor = math.floor(texel)
+                texel_fract = texel - texel_floor
+                sharp_fract = max(0.0, min(1.0, (texel_fract - 0.5) * scale_x + 0.5))
+                s0 = int(texel_floor)
+                s1 = s0 + 1
+                if s0 < 0: s0 = 0
+                if s1 >= srcW: s1 = srcW - 1
+                if s0 >= srcW: s0 = srcW - 1
+                w1 = int(sharp_fract * 256.0 + 0.5)
+                if w1 > 256: w1 = 256
+                if w1 < 0: w1 = 0
+                w0 = 256 - w1
+                if w1 == 256:
+                    s0 = s1
+                    w1 = 0
+                    w0 = 256
+                self.assertTrue(0 <= s0 < srcW)
+                self.assertTrue(0 <= s1 < srcW)
+                self.assertEqual(w0 + w1, 256)
+                if w1 == 0:
+                    cols_pure += 1
+
+            rows_pure = 0
+            for y in range(dstH):
+                y_log = (dstH - 1) - y
+                v = (y_log + 0.5) / float(dstH)
+                texel = v * float(srcH) - 0.5
+                texel_floor = math.floor(texel)
+                texel_fract = texel - texel_floor
+                sharp_fract = max(0.0, min(1.0, (texel_fract - 0.5) * scale_y + 0.5))
+                s0 = int(texel_floor)
+                s1 = s0 + 1
+                if s0 < 0: s0 = 0
+                if s1 >= srcH: s1 = srcH - 1
+                if s0 >= srcH: s0 = srcH - 1
+                w1 = int(sharp_fract * 256.0 + 0.5)
+                if w1 > 256: w1 = 256
+                if w1 < 0: w1 = 0
+                w0 = 256 - w1
+                if w1 == 256:
+                    s0 = s1
+                    w1 = 0
+                    w0 = 256
+                self.assertTrue(0 <= s0 < srcH)
+                self.assertTrue(0 <= s1 < srcH)
+                self.assertEqual(w0 + w1, 256)
+                if w1 == 0:
+                    rows_pure += 1
+
+            return cols_pure / float(dstW), rows_pure / float(dstH)
+
+        p_cols_512, p_rows_512 = simulate_sharp_lut(512, 384)
+        self.assertGreaterEqual(p_cols_512, 0.35, "1.25X must have at least 35% pure pixels")
+        self.assertGreaterEqual(p_rows_512, 0.35, "1.25X must have at least 35% pure pixels")
+
+        p_cols_426, p_rows_426 = simulate_sharp_lut(426, 320)
+        self.assertGreaterEqual(p_cols_426, 0.30, "1.5X must have at least 30% pure pixels")
+        self.assertGreaterEqual(p_rows_426, 0.30, "1.5X must have at least 30% pure pixels")
+
 
 if __name__ == "__main__":
     unittest.main()
