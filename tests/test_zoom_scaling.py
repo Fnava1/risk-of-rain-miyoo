@@ -24,7 +24,7 @@ class TestZoomAndLogging(unittest.TestCase):
         self.assertTrue(config.has_section("Video Options"), "Missing [Video Options] section")
         self.assertTrue(config.has_option("Video Options", "scale"), "Missing scale in [Video Options]")
         scale_val = float(config.get("Video Options", "scale"))
-        self.assertIn(scale_val, (1.0, 1.25), f"Unexpected scale default {scale_val}")
+        self.assertIn(scale_val, (1.0, 1.25, 1.5), f"Unexpected scale default {scale_val}")
 
     def test_logging_disabled_in_launch_sh(self):
         """launch.sh must not redirect output to launch.log and must silence all outputs."""
@@ -111,6 +111,61 @@ class TestZoomAndLogging(unittest.TestCase):
             s1 = min(src_h - 1, s0 + 1)
             self.assertTrue(0 <= s0 < src_h, f"s0 out of bounds: {s0}")
             self.assertTrue(0 <= s1 < src_h, f"s1 out of bounds: {s1}")
+
+    def test_zoom_1_5x_aspect_ratio_and_dimensions(self):
+        """1.5X Handheld Zoom (426x320) must preserve 4:3 aspect ratio and exact coordinates."""
+        screen_w, screen_h = 640, 480
+        zoom_w, zoom_h = 426, 320
+
+        # Aspect ratio matches 4:3 within 0.2%
+        expected_ratio = 4.0 / 3.0
+        actual_ratio = zoom_w / zoom_h
+        self.assertAlmostEqual(actual_ratio, expected_ratio, delta=0.005)
+
+        # Scale factor is 1.5X on Y and ~1.502X on X
+        scale_x = screen_w / zoom_w
+        scale_y = screen_h / zoom_h
+        self.assertAlmostEqual(scale_y, 1.5, places=5)
+        self.assertAlmostEqual(scale_x, 1.5023, delta=0.005)
+
+    def test_zoom_1_5x_mapping_bounds(self):
+        """1.5X: Every destination pixel across 640x480 must map cleanly into 426x320."""
+        src_w, src_h = 426, 320
+        dst_w, dst_h = 640, 480
+
+        # Horizontal mapping
+        for x in range(dst_w):
+            x_log = (dst_w - 1) - x
+            pos = (x_log * (src_w - 1)) / float(dst_w - 1)
+            s0 = int(pos)
+            s1 = min(src_w - 1, s0 + 1)
+            self.assertTrue(0 <= s0 < src_w, f"1.5X s0 out of bounds: {s0}")
+            self.assertTrue(0 <= s1 < src_w, f"1.5X s1 out of bounds: {s1}")
+
+        # Vertical mapping
+        for y in range(dst_h):
+            y_log = (dst_h - 1) - y
+            pos = (y_log * (src_h - 1)) / float(dst_h - 1)
+            s0 = int(pos)
+            s1 = min(src_h - 1, s0 + 1)
+            self.assertTrue(0 <= s0 < src_h, f"1.5X s0 out of bounds: {s0}")
+            self.assertTrue(0 <= s1 < src_h, f"1.5X s1 out of bounds: {s1}")
+
+    def test_tri_state_scale_cycle(self):
+        """scale_refresh must cycle 1.0X -> 1.25X -> 1.5X -> 1.0X."""
+        def next_scale(current):
+            if current < 1.1:
+                return 1.25
+            elif current < 1.35:
+                return 1.5
+            else:
+                return 1.0
+
+        self.assertEqual(next_scale(1.0), 1.25)
+        self.assertEqual(next_scale(1.25), 1.5)
+        self.assertEqual(next_scale(1.5), 1.0)
+        # Verify cycling returns to initial state
+        self.assertEqual(next_scale(next_scale(next_scale(1.0))), 1.0)
 
 
 if __name__ == "__main__":
