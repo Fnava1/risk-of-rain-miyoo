@@ -13,7 +13,8 @@ tests/test_neon
 tests/test_renderer_fixes
 tests/test_opcodes
 tests/test_vm_fixes
-RiskOfRain
+/RiskOfRain
+!dist/Roms/PORTS/Games/Risk of Rain/RiskOfRain
 build_mmp/
 .pytest_cache/
 
