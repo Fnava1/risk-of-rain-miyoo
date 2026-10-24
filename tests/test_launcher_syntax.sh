@@ -49,13 +49,13 @@ grep -q 'sync' "$LAUNCHER" || { echo "FAIL: launch.sh missing sync buffer flush"
 
 # 5. Check controls mapping JSON
 grep -q '"Y": "Ability 1 (Basic)"' "$CONTROLS" || { echo "FAIL: control.json missing Y ability 1"; exit 1; }
-grep -q '"X": "Swap Item"' "$CONTROLS" || { echo "FAIL: control.json missing X swap item"; exit 1; }
+grep -q '"X": "Use Equipment Item"' "$CONTROLS" || { echo "FAIL: control.json missing X use item"; exit 1; }
 grep -q '"A": "Enter / Confirm / Buy"' "$CONTROLS" || { echo "FAIL: control.json missing A enter/confirm"; exit 1; }
 grep -q '"B": "Jump"' "$CONTROLS" || { echo "FAIL: control.json missing B jump"; exit 1; }
 grep -q '"L1": "Ability 2"' "$CONTROLS" || { echo "FAIL: control.json missing L1 ability 2"; exit 1; }
 grep -q '"R1": "Ability 4"' "$CONTROLS" || { echo "FAIL: control.json missing R1 ability 4"; exit 1; }
 grep -q '"R2": "Ability 3"' "$CONTROLS" || { echo "FAIL: control.json missing R2 ability 3"; exit 1; }
-grep -q '"L2": "Use Equipment Item"' "$CONTROLS" || { echo "FAIL: control.json missing L2 item"; exit 1; }
+grep -q '"L2": "Swap Item"' "$CONTROLS" || { echo "FAIL: control.json missing L2 swap item"; exit 1; }
 
 echo "[+] OnionOS port packaging syntax test PASSED."
 exit 0

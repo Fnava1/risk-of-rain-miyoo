@@ -26,14 +26,15 @@ class TestZoomAndLogging(unittest.TestCase):
         scale_val = float(config.get("Video Options", "scale"))
         self.assertIn(scale_val, (1.0, 1.25), f"Unexpected scale default {scale_val}")
 
-    def test_logging_enabled_in_launch_sh(self):
-        """launch.sh must redirect output to launch.log for diagnostics."""
+    def test_logging_disabled_in_launch_sh(self):
+        """launch.sh must not redirect output to launch.log and must silence all outputs."""
         self.assertTrue(os.path.exists(LAUNCH_PATH), f"Missing {LAUNCH_PATH}")
         with open(LAUNCH_PATH, "r", encoding="utf-8") as f:
             content = f.read()
 
-        self.assertIn('exec > "$LOG_FILE"', content, "launch.sh should redirect stdout to log file")
-        self.assertIn('LOG_FILE="$DIR/launch.log"', content, "launch.sh should define LOG_FILE")
+        self.assertNotIn('exec > "$LOG_FILE"', content, "launch.sh should not redirect stdout to log file")
+        self.assertIn("exec > /dev/null 2>&1", content, "launch.sh must redirect all stdout/stderr to /dev/null")
+        self.assertIn('rm -f "$DIR/launch.log"', content, "launch.sh should clean up any existing launch.log")
 
     def test_binary_properties(self):
         """RiskOfRain binary must exist, be ARM ELF, and contain scale_refresh symbol."""

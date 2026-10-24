@@ -4,11 +4,11 @@
   "A": "Enter / Confirm / Buy",
   "B": "Jump",
   "Y": "Ability 1 (Basic)",
-  "X": "Swap Item",
+  "X": "Use Equipment Item",
   "L1": "Ability 2",
   "R1": "Ability 4",
   "R2": "Ability 3",
-  "L2": "Use Equipment Item",
+  "L2": "Swap Item",
   "START": "Pause Menu",
   "SELECT": "Hold for Inspect Cursor / Mouse"
 }
