@@ -71,14 +71,15 @@ This project strictly adheres to a **Clean-Room BYOD (Bring Your Own Data)** pol
 | :--- | :--- |
 | **D-Pad Left / Right** | Move |
 | **D-Pad Up / Down** | Climb Ladders / Ropes |
-| **A** | Jump |
+| **A** | Confirm / Interact / Buy Chests |
+| **B** | Jump |
 | **Y** | Primary Attack (Skill 1) |
 | **L1** | Secondary Skill (Skill 2) |
-| **R1** | Utility Skill (Skill 3) |
-| **R2** | Special Skill (Skill 4) |
-| **L2** | Use Equipment Item |
-| **X** | Interact / Swap Item |
-| **Select** | View Map / Zoom View |
+| **R2** | Utility Skill (Skill 3) |
+| **R1** | Special Skill (Skill 4) |
+| **X** | Use Equipment Item |
+| **L2** | Swap Equipment Item |
+| **Select** | Hold for Inspect Cursor (Mouse) |
 | **Start / Menu** | Pause Menu (Escape) |
 
 ---
