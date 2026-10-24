@@ -10,6 +10,7 @@ Verifies the multi-tier detection logic handles:
 """
 
 import os
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -56,12 +57,19 @@ class TestHardwareDetection(unittest.TestCase):
 
     def run_detection_in_env(self, env_setup_script):
         """
-        Executes the detection script in a sandboxed bash environment inside Docker.
-        env_setup_script prepares fake sysfs/customer/tmp directories.
+        Executes the detection script in a sandboxed bash environment.
+        On Linux/CI, executes natively in bash. On Windows, executes inside Docker.
         """
+        if sys.platform != "win32":
+            root_dir = self.test_dir
+            cmd_prefix = ["bash", "-c"]
+        else:
+            root_dir = self.container_test_dir
+            cmd_prefix = ["docker", "exec", "determined_moore", "bash", "-c"]
+
         script = f"""
 set -e
-ROOT="{self.container_test_dir}"
+ROOT="{root_dir}"
 cd "$ROOT"
 
 # Fake environment
@@ -76,7 +84,7 @@ cd "$ROOT"
 
 echo "RESULT:IS_PLUS=$IS_PLUS:CPU_FREQ=$CPU_FREQ"
 """
-        cmd = ["docker", "exec", "determined_moore", "bash", "-c", script]
+        cmd = cmd_prefix + [script]
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, check=True)
             for line in res.stdout.splitlines():
