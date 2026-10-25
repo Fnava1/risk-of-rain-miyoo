@@ -7362,50 +7362,10 @@ static RValue builtin_array_equals(VMContext* ctx, RValue* args, int32_t argCoun
 
 // ===[ COLLISION FUNCTIONS]===
 
-static RValue builtin_place_free(VMContext* ctx, RValue* args, int32_t argCount) {
-    REQUIRE_ARGC_AT_LEAST("place_free", 2, RValue_makeBool(true));
-
-    Runner* runner = ctx->runner;
-    Instance* caller = ctx->currentInstance;
-    if (caller == nullptr) return RValue_makeBool(true);
-
-    GMLReal testX = RValue_toReal(args[0]);
-    GMLReal testY = RValue_toReal(args[1]);
-
-    // Save current position and temporarily move to test position
-    GMLReal savedX = caller->x;
-    GMLReal savedY = caller->y;
-    caller->x = testX;
-    caller->y = testY;
-
-    InstanceBBox callerBBox = Collision_computeBBox(runner, caller);
-    bool free = true;
-
-    if (callerBBox.valid) {
-        int32_t instanceCount = (int32_t) arrlen(runner->instances);
-        repeat(instanceCount, i) {
-            Instance* other = runner->instances[i];
-            if (!other->active || !other->solid || other == caller) continue;
-
-            InstanceBBox otherBBox = Collision_computeBBox(runner, other);
-            if (!otherBBox.valid) continue;
-
-            if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
-                free = false;
-                break;
-            }
-        }
-    }
-
-    // Restore original position
-    caller->x = savedX;
-    caller->y = savedY;
-
-    return RValue_makeBool(free);
-}
-
 // place_empty(x, y) - returns true if no instance overlaps at position (x, y), checking ALL instances (not just solid)
 static bool placeEmptyAt(Runner* runner, Instance* caller, GMLReal testX, GMLReal testY) {
+    SpatialGrid_syncGrid(runner, runner->spatialGrid);
+
     GMLReal savedX = caller->x;
     GMLReal savedY = caller->y;
     caller->x = testX;
@@ -7415,17 +7375,42 @@ static bool placeEmptyAt(Runner* runner, Instance* caller, GMLReal testX, GMLRea
     bool empty = true;
 
     if (callerBBox.valid) {
-        int32_t instanceCount = (int32_t) arrlen(runner->instances);
-        repeat(instanceCount, i) {
-            Instance* other = runner->instances[i];
-            if (!other->active || other == caller) continue;
+        if (runner->spatialGrid != nullptr) {
+            SpatialGridQuery query = SpatialGrid_prepareQuery(runner, callerBBox.left, callerBBox.top, callerBBox.right, callerBBox.bottom, INSTANCE_ALL);
 
-            InstanceBBox otherBBox = Collision_computeBBox(runner, other);
-            if (!otherBBox.valid) continue;
+            for (int32_t gx = query.range.minGridX; query.range.maxGridX >= gx && empty; gx++) {
+                for (int32_t gy = query.range.minGridY; query.range.maxGridY >= gy && empty; gy++) {
+                    Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+                    int32_t cellLen = (int32_t) arrlen(cell);
+                    repeat(cellLen, ci) {
+                        Instance* other = cell[ci];
+                        if (!other->active || other == caller) continue;
+                        if (other->lastCollisionQueryId == query.queryId) continue;
+                        other->lastCollisionQueryId = query.queryId;
 
-            if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
-                empty = false;
-                break;
+                        InstanceBBox otherBBox = Collision_computeBBox(runner, other);
+                        if (!otherBBox.valid) continue;
+
+                        if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
+                            empty = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            int32_t instanceCount = (int32_t) arrlen(runner->instances);
+            repeat(instanceCount, i) {
+                Instance* other = runner->instances[i];
+                if (!other->active || other == caller) continue;
+
+                InstanceBBox otherBBox = Collision_computeBBox(runner, other);
+                if (!otherBBox.valid) continue;
+
+                if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
+                    empty = false;
+                    break;
+                }
             }
         }
     }
@@ -7437,6 +7422,8 @@ static bool placeEmptyAt(Runner* runner, Instance* caller, GMLReal testX, GMLRea
 
 // placeFreeAt - returns true if no SOLID instance overlaps at position (x, y)
 static bool placeFreeAt(Runner* runner, Instance* caller, GMLReal testX, GMLReal testY) {
+    SpatialGrid_syncGrid(runner, runner->spatialGrid);
+
     GMLReal savedX = caller->x;
     GMLReal savedY = caller->y;
     caller->x = testX;
@@ -7446,17 +7433,42 @@ static bool placeFreeAt(Runner* runner, Instance* caller, GMLReal testX, GMLReal
     bool free = true;
 
     if (callerBBox.valid) {
-        int32_t instanceCount = (int32_t) arrlen(runner->instances);
-        repeat(instanceCount, i) {
-            Instance* other = runner->instances[i];
-            if (!other->active || !other->solid || other == caller) continue;
+        if (runner->spatialGrid != nullptr) {
+            SpatialGridQuery query = SpatialGrid_prepareQuery(runner, callerBBox.left, callerBBox.top, callerBBox.right, callerBBox.bottom, INSTANCE_ALL);
 
-            InstanceBBox otherBBox = Collision_computeBBox(runner, other);
-            if (!otherBBox.valid) continue;
+            for (int32_t gx = query.range.minGridX; query.range.maxGridX >= gx && free; gx++) {
+                for (int32_t gy = query.range.minGridY; query.range.maxGridY >= gy && free; gy++) {
+                    Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+                    int32_t cellLen = (int32_t) arrlen(cell);
+                    repeat(cellLen, ci) {
+                        Instance* other = cell[ci];
+                        if (!other->active || !other->solid || other == caller) continue;
+                        if (other->lastCollisionQueryId == query.queryId) continue;
+                        other->lastCollisionQueryId = query.queryId;
 
-            if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
-                free = false;
-                break;
+                        InstanceBBox otherBBox = Collision_computeBBox(runner, other);
+                        if (!otherBBox.valid) continue;
+
+                        if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
+                            free = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            int32_t instanceCount = (int32_t) arrlen(runner->instances);
+            repeat(instanceCount, i) {
+                Instance* other = runner->instances[i];
+                if (!other->active || !other->solid || other == caller) continue;
+
+                InstanceBBox otherBBox = Collision_computeBBox(runner, other);
+                if (!otherBBox.valid) continue;
+
+                if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
+                    free = false;
+                    break;
+                }
             }
         }
     }
@@ -7466,8 +7478,23 @@ static bool placeFreeAt(Runner* runner, Instance* caller, GMLReal testX, GMLReal
     return free;
 }
 
+static RValue builtin_place_free(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("place_free", 2, RValue_makeBool(true));
+
+    Runner* runner = ctx->runner;
+    Instance* caller = ctx->currentInstance;
+    if (caller == nullptr) return RValue_makeBool(true);
+
+    GMLReal testX = RValue_toReal(args[0]);
+    GMLReal testY = RValue_toReal(args[1]);
+
+    return RValue_makeBool(placeFreeAt(runner, caller, testX, testY));
+}
+
 // noCollisionWithObject - returns true if no instance of the given object overlaps at position (x, y)
 static bool noCollisionWithObject(Runner* runner, Instance* caller, GMLReal testX, GMLReal testY, int32_t objIndex) {
+    SpatialGrid_syncGrid(runner, runner->spatialGrid);
+
     GMLReal savedX = caller->x;
     GMLReal savedY = caller->y;
     caller->x = testX;
@@ -7477,21 +7504,49 @@ static bool noCollisionWithObject(Runner* runner, Instance* caller, GMLReal test
     bool free = true;
 
     if (callerBBox.valid) {
-        int32_t snapBase = Runner_pushInstancesForTarget(runner, objIndex);
-        int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
-        for (int32_t i = snapBase; snapEnd > i; i++) {
-            Instance* other = runner->instanceSnapshots[i];
-            if (!other->active || other == caller) continue;
+        if (runner->spatialGrid != nullptr) {
+            SpatialGridQuery query = SpatialGrid_prepareQuery(runner, callerBBox.left, callerBBox.top, callerBBox.right, callerBBox.bottom, objIndex);
 
-            InstanceBBox otherBBox = Collision_computeBBox(runner, other);
-            if (!otherBBox.valid) continue;
+            for (int32_t gx = query.range.minGridX; query.range.maxGridX >= gx && free; gx++) {
+                for (int32_t gy = query.range.minGridY; query.range.maxGridY >= gy && free; gy++) {
+                    Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+                    int32_t cellLen = (int32_t) arrlen(cell);
+                    repeat(cellLen, ci) {
+                        Instance* other = cell[ci];
+                        if (!other->active || other == caller) continue;
+                        if (other->lastCollisionQueryId == query.queryId) continue;
+                        other->lastCollisionQueryId = query.queryId;
 
-            if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
-                free = false;
-                break;
+                        if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, objIndex)) continue;
+                        if (!query.matchAll && query.filterByInstanceId && other->instanceId != (uint32_t) objIndex) continue;
+
+                        InstanceBBox otherBBox = Collision_computeBBox(runner, other);
+                        if (!otherBBox.valid) continue;
+
+                        if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
+                            free = false;
+                            break;
+                        }
+                    }
+                }
             }
+        } else {
+            int32_t snapBase = Runner_pushInstancesForTarget(runner, objIndex);
+            int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
+            for (int32_t i = snapBase; snapEnd > i; i++) {
+                Instance* other = runner->instanceSnapshots[i];
+                if (!other->active || other == caller) continue;
+
+                InstanceBBox otherBBox = Collision_computeBBox(runner, other);
+                if (!otherBBox.valid) continue;
+
+                if (Collision_instancesOverlapPrecise(runner, caller, other, callerBBox, otherBBox)) {
+                    free = false;
+                    break;
+                }
+            }
+            Runner_popInstanceSnapshot(runner, snapBase);
         }
-        Runner_popInstanceSnapshot(runner, snapBase);
     }
 
     caller->x = savedX;
@@ -10672,14 +10727,18 @@ static void moveContactCommon(Runner* runner, Instance* inst, GMLReal dir, GMLRe
     if (!bounceTestFree(runner, inst, inst->x, inst->y, useall)) {
         return;
     }
+    float origX = inst->x;
+    float origY = inst->y;
     for (int32_t i = 1; steps >= i; i++) {
         GMLReal nx = inst->x + dx;
         GMLReal ny = inst->y + dy;
         if (!bounceTestFree(runner, inst, nx, ny, useall)) {
-            return;
+            break;
         }
         inst->x = (float) nx;
         inst->y = (float) ny;
+    }
+    if (inst->x != origX || inst->y != origY) {
         SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
     }
 }
@@ -12321,14 +12380,21 @@ static void drawTextExtCommonColor(Runner* runner, const char* str, float x, flo
     Font* font = &runner->dataWin->font.fonts[fontIndex];
 
     PreprocessedText processedText = TextUtils_preprocessGmlTextIfNeeded(runner, str);
-    PreprocessedText wrappedText = TextUtils_wrapText(font, processedText.text, width);
+    const char* textToDraw = processedText.text;
+    PreprocessedText wrappedText = {0};
+    if (width > 0) {
+        wrappedText = TextUtils_wrapText(font, processedText.text, width);
+        textToDraw = wrappedText.text;
+    }
     if (c1 == c2 && c2 == c3 && c3 == c4 && c4 == runner->renderer->drawColor) {
         // using the ordinary drawText is safe
-        runner->renderer->vtable->drawText(runner->renderer, wrappedText.text, x, y, xscale, yscale, angle, (float) separation);
+        runner->renderer->vtable->drawText(runner->renderer, textToDraw, x, y, xscale, yscale, angle, (float) separation);
     } else {
-        runner->renderer->vtable->drawTextColor(runner->renderer, wrappedText.text, x, y, xscale, yscale, angle, c1, c2, c3, c4, 1.0f, (float) separation);
+        runner->renderer->vtable->drawTextColor(runner->renderer, textToDraw, x, y, xscale, yscale, angle, c1, c2, c3, c4, 1.0f, (float) separation);
     }
-    PreprocessedText_free(wrappedText);
+    if (wrappedText.owning) {
+        PreprocessedText_free(wrappedText);
+    }
     PreprocessedText_free(processedText);
 }
 static void drawTextExtCommon(Runner* runner, const char* str, float x, float y, float xscale, float yscale, float angle, int32_t separation, int32_t width) {
@@ -12420,9 +12486,16 @@ static void drawTextColorExtCommon(Runner* runner, const char* str, float x, flo
     Font* font = &runner->dataWin->font.fonts[fontIndex];
 
     PreprocessedText processedText = TextUtils_preprocessGmlTextIfNeeded(runner, str);
-    PreprocessedText wrappedText = TextUtils_wrapText(font, processedText.text, width);
-    runner->renderer->vtable->drawTextColor(runner->renderer, wrappedText.text, x, y, xscale, yscale, angle, c1, c2, c3, c4, alpha, (float) separation);
-    PreprocessedText_free(wrappedText);
+    const char* textToDraw = processedText.text;
+    PreprocessedText wrappedText = {0};
+    if (width > 0) {
+        wrappedText = TextUtils_wrapText(font, processedText.text, width);
+        textToDraw = wrappedText.text;
+    }
+    runner->renderer->vtable->drawTextColor(runner->renderer, textToDraw, x, y, xscale, yscale, angle, c1, c2, c3, c4, alpha, (float) separation);
+    if (wrappedText.owning) {
+        PreprocessedText_free(wrappedText);
+    }
     PreprocessedText_free(processedText);
 }
 

@@ -424,7 +424,11 @@ typedef struct {
 // Upper bound on live particles per system. GameMaker itself has no such limit, but an emitter left
 // streaming in a room the player never leaves will grow without bound, and the consoles this runner
 // targets cannot absorb that. Spawns past the cap are dropped (warned about once per system).
-#define PARTICLE_SYSTEM_MAX_PARTICLES 8192
+#if defined(PLATFORM_MIYOO) || defined(PLATFORM_HANDHELD) || defined(PSP) || defined(VITA) || defined(SWITCH_PLATFORM)
+#define PARTICLE_SYSTEM_MAX_PARTICLES 512
+#else
+#define PARTICLE_SYSTEM_MAX_PARTICLES 1024
+#endif
 
 typedef struct {
     bool used;

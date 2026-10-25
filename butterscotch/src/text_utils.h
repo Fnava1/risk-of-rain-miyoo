@@ -269,6 +269,12 @@ static inline PreprocessedText TextUtils_wrapText(Font* font, const char* text, 
         return ret;
     }
 
+    if (0 >= maxWidth) {
+        ret.text = text;
+        ret.owning = false;
+        return ret;
+    }
+
     int32_t linewidth = (0 > maxWidth) ? 10000000 : maxWidth; // means nothing will "wrap"
 
     // Worst case: each byte becomes itself plus a '\n' separator.
