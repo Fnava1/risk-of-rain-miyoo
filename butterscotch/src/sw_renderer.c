@@ -91,6 +91,12 @@ typedef struct {
     bool     exists;
 } SWSurface;
 
+typedef struct {
+    float x, y;
+    uint32_t color;
+    float alpha;
+} SWVertex;
+
 // ===[ SWRenderer Struct ]===
 
 typedef struct {
@@ -130,6 +136,13 @@ typedef struct {
     bool blendEnable;
     int32_t blendMode;
     BlendFactors blendFactors;
+
+    // Primitive Batching
+    int32_t   primType;
+    int32_t   primTexture;
+    int32_t   primVertexCount;
+    int32_t   primVertexCapacity;
+    SWVertex *primVertices;
 } SWRenderer;
 
 static RendererVtable swVtable;
@@ -289,6 +302,13 @@ static void swInit(Renderer *renderer, DataWin *dataWin) {
         sw->pages = (SWTexturePage *)safeCalloc(sw->pageCount, sizeof(SWTexturePage));
     }
 
+    // Initialize primitive batch buffer
+    sw->primType = 0;
+    sw->primTexture = -1;
+    sw->primVertexCount = 0;
+    sw->primVertexCapacity = 512;
+    sw->primVertices = (SWVertex *)safeCalloc(512, sizeof(SWVertex));
+
     Matrix4f world;
     Matrix4f_identity(&world);
     sw->base.gmlMatrices[MATRIX_WORLD] = world;
@@ -297,6 +317,10 @@ static void swInit(Renderer *renderer, DataWin *dataWin) {
 
 static void swDestroy(Renderer *renderer) {
     SWRenderer *sw = (SWRenderer *)renderer;
+    if (sw->primVertices) {
+        free(sw->primVertices);
+        sw->primVertices = NULL;
+    }
     if (sw->buffers[0]) {
         free(sw->buffers[0]);
         sw->buffers[0] = NULL;
@@ -996,18 +1020,8 @@ static void swDrawRectangleColor(Renderer *renderer, float x1, float y1, float x
     swDrawRectangle(renderer, x1, y1, x2, y2, color1, alpha, outline);
 }
 
-static void swDrawLine(Renderer *renderer, float x1, float y1, float x2, float y2, MAYBE_UNUSED float width, uint32_t color, float alpha) {
-    SWRenderer *sw = (SWRenderer *)renderer;
+static void sw_draw_line_internal(SWRenderer *sw, int px0, int py0, int px1, int py1, uint32_t color, float alpha) {
     if (alpha <= 0.0f) return;
-
-    float sx1, sy1, sx2, sy2;
-    sw_transform_point(sw, x1, y1, &sx1, &sy1);
-    sw_transform_point(sw, x2, y2, &sx2, &sy2);
-
-    int px0 = (int)roundf(sx1);
-    int py0 = (int)roundf(sy1);
-    int px1 = (int)roundf(sx2);
-    int py1 = (int)roundf(sy2);
 
     int dx = abs(px1 - px0), sx = px0 < px1 ? 1 : -1;
     int dy = -abs(py1 - py0), sy = py0 < py1 ? 1 : -1;
@@ -1030,14 +1044,134 @@ static void swDrawLine(Renderer *renderer, float x1, float y1, float x2, float y
     }
 }
 
+static void swDrawLine(Renderer *renderer, float x1, float y1, float x2, float y2, MAYBE_UNUSED float width, uint32_t color, float alpha) {
+    SWRenderer *sw = (SWRenderer *)renderer;
+    if (alpha <= 0.0f) return;
+
+    float sx1, sy1, sx2, sy2;
+    sw_transform_point(sw, x1, y1, &sx1, &sy1);
+    sw_transform_point(sw, x2, y2, &sx2, &sy2);
+
+    sw_draw_line_internal(sw, (int)roundf(sx1), (int)roundf(sy1), (int)roundf(sx2), (int)roundf(sy2), color, alpha);
+}
+
 static void swDrawLineColor(Renderer *renderer, float x1, float y1, float x2, float y2, float width, uint32_t color1, MAYBE_UNUSED uint32_t color2, float alpha) {
     swDrawLine(renderer, x1, y1, x2, y2, width, color1, alpha);
 }
 
-static void swDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t color1, MAYBE_UNUSED uint32_t color2, MAYBE_UNUSED uint32_t color3, float alpha, MAYBE_UNUSED bool outline) {
-    swDrawLine(renderer, x1, y1, x2, y2, 1.0f, color1, alpha);
-    swDrawLine(renderer, x2, y2, x3, y3, 1.0f, color1, alpha);
-    swDrawLine(renderer, x3, y3, x1, y1, 1.0f, color1, alpha);
+static void sw_rasterize_triangle(SWRenderer *sw, float x0, float y0, float x1, float y1, float x2, float y2, uint32_t color, float alpha) {
+    if (alpha <= 0.0f) return;
+
+    // Sort vertices by Y ascending: y0 <= y1 <= y2
+    if (y0 > y1) { float tx = x0; x0 = x1; x1 = tx; float ty = y0; y0 = y1; y1 = ty; }
+    if (y0 > y2) { float tx = x0; x0 = x2; x2 = tx; float ty = y0; y0 = y2; y2 = ty; }
+    if (y1 > y2) { float tx = x1; x1 = x2; x2 = tx; float ty = y1; y1 = y2; y2 = ty; }
+
+    int y_start = (int)ceilf(y0);
+    int y_end   = (int)floorf(y2);
+
+    if (y_start < sw->clipY0) y_start = sw->clipY0;
+    if (y_end >= sw->clipY1)  y_end = sw->clipY1 - 1;
+    if (y_start > y_end) return;
+
+    float total_height = y2 - y0;
+    if (total_height <= 0.0001f) return;
+
+    uint16_t c565 = bgr_to_rgb565(color);
+    uint8_t a = (uint8_t)(alpha * 255.0f);
+    if (a == 0) return;
+
+    int stride = sw->targetWidth;
+    uint32_t a5 = ((uint32_t)a + 4) >> 3;
+    uint32_t inv_a5 = 32 - a5;
+    uint32_t const_s_rb = (uint32_t)(c565 & 0xF81F) * a5;
+    uint32_t const_s_g  = (uint32_t)(c565 & 0x07E0) * a5;
+
+    for (int y = y_start; y <= y_end; y++) {
+        float fy = (float)y;
+        float alpha_long = (fy - y0) / total_height;
+        float x_long = x0 + (x2 - x0) * alpha_long;
+
+        float x_short;
+        if (fy < y1) {
+            float seg_h = y1 - y0;
+            if (seg_h <= 0.0001f) {
+                x_short = x0;
+            } else {
+                x_short = x0 + (x1 - x0) * ((fy - y0) / seg_h);
+            }
+        } else {
+            float seg_h = y2 - y1;
+            if (seg_h <= 0.0001f) {
+                x_short = x1;
+            } else {
+                x_short = x1 + (x2 - x1) * ((fy - y1) / seg_h);
+            }
+        }
+
+        int x_min = (int)ceilf(fminf(x_long, x_short));
+        int x_max = (int)floorf(fmaxf(x_long, x_short));
+
+        if (x_min > x_max) {
+            int x_mid = (int)roundf((x_long + x_short) * 0.5f);
+            if (x_mid >= sw->clipX0 && x_mid < sw->clipX1) {
+                uint16_t *ptr = sw->currentTarget + y * stride + x_mid;
+                if (a == 255 || !sw->blendEnable) *ptr = c565;
+                else {
+                    uint32_t p0 = *ptr;
+                    uint32_t rb0 = ((const_s_rb + (p0 & 0xF81F) * inv_a5) >> 5) & 0xF81F;
+                    uint32_t g0  = ((const_s_g  + (p0 & 0x07E0) * inv_a5) >> 5) & 0x07E0;
+                    *ptr = (uint16_t)(rb0 | g0);
+                }
+            }
+            continue;
+        }
+
+        if (x_min < sw->clipX0) x_min = sw->clipX0;
+        if (x_max >= sw->clipX1) x_max = sw->clipX1 - 1;
+
+        if (x_min <= x_max) {
+            uint16_t *row = sw->currentTarget + y * stride;
+            if (a == 255 || !sw->blendEnable) {
+                for (int x = x_min; x <= x_max; x++) {
+                    row[x] = c565;
+                }
+            } else {
+                int x = x_min;
+                for (; x + 1 <= x_max; x += 2) {
+                    uint32_t p0 = row[x];
+                    uint32_t p1 = row[x + 1];
+                    uint32_t rb0 = ((const_s_rb + (p0 & 0xF81F) * inv_a5) >> 5) & 0xF81F;
+                    uint32_t g0  = ((const_s_g  + (p0 & 0x07E0) * inv_a5) >> 5) & 0x07E0;
+                    uint32_t rb1 = ((const_s_rb + (p1 & 0xF81F) * inv_a5) >> 5) & 0xF81F;
+                    uint32_t g1  = ((const_s_g  + (p1 & 0x07E0) * inv_a5) >> 5) & 0x07E0;
+                    row[x]     = (uint16_t)(rb0 | g0);
+                    row[x + 1] = (uint16_t)(rb1 | g1);
+                }
+                if (x <= x_max) {
+                    uint32_t p0 = row[x];
+                    uint32_t rb0 = ((const_s_rb + (p0 & 0xF81F) * inv_a5) >> 5) & 0xF81F;
+                    uint32_t g0  = ((const_s_g  + (p0 & 0x07E0) * inv_a5) >> 5) & 0x07E0;
+                    row[x] = (uint16_t)(rb0 | g0);
+                }
+            }
+        }
+    }
+}
+
+static void swDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t color1, MAYBE_UNUSED uint32_t color2, MAYBE_UNUSED uint32_t color3, float alpha, bool outline) {
+    SWRenderer *sw = (SWRenderer *)renderer;
+    if (outline) {
+        swDrawLine(renderer, x1, y1, x2, y2, 1.0f, color1, alpha);
+        swDrawLine(renderer, x2, y2, x3, y3, 1.0f, color1, alpha);
+        swDrawLine(renderer, x3, y3, x1, y1, 1.0f, color1, alpha);
+    } else {
+        float sx1, sy1, sx2, sy2, sx3, sy3;
+        sw_transform_point(sw, x1, y1, &sx1, &sy1);
+        sw_transform_point(sw, x2, y2, &sx2, &sy2);
+        sw_transform_point(sw, x3, y3, &sx3, &sy3);
+        sw_rasterize_triangle(sw, sx1, sy1, sx2, sy2, sx3, sy3, color1, alpha);
+    }
 }
 
 static void swDrawCircleColor(Renderer *renderer, float cx, float cy, float radius, uint32_t col1, MAYBE_UNUSED uint32_t col2, float alpha, bool outline) {
@@ -1641,10 +1775,108 @@ static void swGpuGetColorWriteEnable(MAYBE_UNUSED Renderer *renderer, bool *r, b
 static void swGpuSetFog(MAYBE_UNUSED Renderer *renderer, MAYBE_UNUSED bool enable, MAYBE_UNUSED uint32_t color, MAYBE_UNUSED float start, MAYBE_UNUSED float end) {}
 static void swDrawTiledPart(MAYBE_UNUSED Renderer *renderer, MAYBE_UNUSED int32_t tpagIndex, MAYBE_UNUSED int32_t srcX, MAYBE_UNUSED int32_t srcY, MAYBE_UNUSED int32_t srcW, MAYBE_UNUSED int32_t srcH, MAYBE_UNUSED float dstX, MAYBE_UNUSED float dstY, MAYBE_UNUSED float dstW, MAYBE_UNUSED float dstH, MAYBE_UNUSED uint32_t color, MAYBE_UNUSED float alpha) {}
 
-static void swPrimitiveBegin(MAYBE_UNUSED Renderer *renderer, MAYBE_UNUSED int32_t primitiveType) {}
-static void swPrimitiveBeginTexture(MAYBE_UNUSED Renderer *renderer, MAYBE_UNUSED int32_t primitiveType, MAYBE_UNUSED int32_t texture) {}
-static void swPrimitiveEnd(MAYBE_UNUSED Renderer *renderer) {}
-static void swDrawVertex(MAYBE_UNUSED Renderer *renderer, MAYBE_UNUSED float x, MAYBE_UNUSED float y, MAYBE_UNUSED float z, MAYBE_UNUSED uint32_t color, MAYBE_UNUSED float alpha, MAYBE_UNUSED float u, MAYBE_UNUSED float v) {}
+static void swPrimitiveBegin(Renderer *renderer, int32_t primitiveType) {
+    SWRenderer *sw = (SWRenderer *)renderer;
+    sw->primType = primitiveType;
+    sw->primTexture = -1;
+    sw->primVertexCount = 0;
+}
+
+static void swPrimitiveBeginTexture(Renderer *renderer, int32_t primitiveType, int32_t texture) {
+    SWRenderer *sw = (SWRenderer *)renderer;
+    sw->primType = primitiveType;
+    sw->primTexture = texture;
+    sw->primVertexCount = 0;
+}
+
+static void swDrawVertex(Renderer *renderer, float x, float y, MAYBE_UNUSED float z, uint32_t color, float alpha, MAYBE_UNUSED float u, MAYBE_UNUSED float v) {
+    SWRenderer *sw = (SWRenderer *)renderer;
+    if (sw->primVertexCount >= sw->primVertexCapacity) {
+        int32_t newCap = sw->primVertexCapacity * 2;
+        if (newCap < 512) newCap = 512;
+        SWVertex *newVerts = (SWVertex *)realloc(sw->primVertices, newCap * sizeof(SWVertex));
+        if (!newVerts) return;
+        sw->primVertices = newVerts;
+        sw->primVertexCapacity = newCap;
+    }
+
+    float sx, sy;
+    sw_transform_point(sw, x, y, &sx, &sy);
+
+    SWVertex *vert = &sw->primVertices[sw->primVertexCount++];
+    vert->x = sx;
+    vert->y = sy;
+    vert->color = color;
+    vert->alpha = alpha;
+}
+
+static void swPrimitiveEnd(Renderer *renderer) {
+    SWRenderer *sw = (SWRenderer *)renderer;
+    int32_t count = sw->primVertexCount;
+    if (count <= 0) return;
+
+    SWVertex *v = sw->primVertices;
+    int stride = sw->targetWidth;
+
+    switch (sw->primType) {
+        case PRIMITIVE_POINTS: {
+            for (int32_t i = 0; i < count; i++) {
+                int px = (int)roundf(v[i].x);
+                int py = (int)roundf(v[i].y);
+                if (px >= sw->clipX0 && px < sw->clipX1 && py >= sw->clipY0 && py < sw->clipY1) {
+                    uint16_t c565 = bgr_to_rgb565(v[i].color);
+                    uint8_t a = (uint8_t)(v[i].alpha * 255.0f);
+                    if (a == 0) continue;
+                    uint16_t *ptr = sw->currentTarget + py * stride + px;
+                    if (a == 255 || !sw->blendEnable) *ptr = c565;
+                    else *ptr = blend_pixel_rgb565(*ptr, c565, a);
+                }
+            }
+            break;
+        }
+        case PRIMITIVE_LINES: {
+            for (int32_t i = 0; i + 1 < count; i += 2) {
+                sw_draw_line_internal(sw, (int)roundf(v[i].x), (int)roundf(v[i].y),
+                                          (int)roundf(v[i+1].x), (int)roundf(v[i+1].y),
+                                          v[i].color, v[i].alpha);
+            }
+            break;
+        }
+        case PRIMITIVE_LINE_STRIP: {
+            for (int32_t i = 0; i + 1 < count; i++) {
+                sw_draw_line_internal(sw, (int)roundf(v[i].x), (int)roundf(v[i].y),
+                                          (int)roundf(v[i+1].x), (int)roundf(v[i+1].y),
+                                          v[i+1].color, v[i+1].alpha);
+            }
+            break;
+        }
+        case PRIMITIVE_TRIANGLES: {
+            for (int32_t i = 0; i + 2 < count; i += 3) {
+                sw_rasterize_triangle(sw, v[i].x, v[i].y, v[i+1].x, v[i+1].y, v[i+2].x, v[i+2].y,
+                                      v[i+2].color, v[i+2].alpha);
+            }
+            break;
+        }
+        case PRIMITIVE_TRIANGLE_STRIP: {
+            for (int32_t i = 0; i + 2 < count; i++) {
+                sw_rasterize_triangle(sw, v[i].x, v[i].y, v[i+1].x, v[i+1].y, v[i+2].x, v[i+2].y,
+                                      v[i+2].color, v[i+2].alpha);
+            }
+            break;
+        }
+        case PRIMITIVE_TRIANGLE_FAN: {
+            for (int32_t i = 1; i + 1 < count; i++) {
+                sw_rasterize_triangle(sw, v[0].x, v[0].y, v[i].x, v[i].y, v[i+1].x, v[i+1].y,
+                                      v[i+1].color, v[i+1].alpha);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+
+    sw->primVertexCount = 0;
+}
 
 static void swGpuSetShader(MAYBE_UNUSED Renderer *renderer, MAYBE_UNUSED int32_t shaderIndex) {}
 static void swGpuResetShader(MAYBE_UNUSED Renderer *renderer) {}
