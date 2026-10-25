@@ -1,25 +1,77 @@
-.superpowers/
+# ==============================================================================
+# AI Assistants, Agent Runtimes & Workspace Context
+# ==============================================================================
 .claude/
+.gemini/
+.superpowers/
 .trail/
-__pycache__/
-*.pyc
-*.o
-*.a
-*.so
-tests/test_pacing
-tests/test_audio
-tests/test_audio_fixes
-tests/test_neon
-tests/test_renderer_fixes
-tests/test_opcodes
-tests/test_vm_fixes
-/RiskOfRain
-!dist/Roms/PORTS/Games/Risk of Rain/RiskOfRain
-build_mmp/
-.pytest_cache/
+.cursor/
+.aider*
+.windsurf/
 
-# Build artifacts
+# ==============================================================================
+# IDEs, Editors & Tooling
+# ==============================================================================
+.vscode/
+**/.vscode/
+.idea/
+**/.idea/
+*.swp
+*.swo
+*~
+*.bak
+*.sublime-project
+*.sublime-workspace
+.project
+.cproject
+.settings/
+
+# ==============================================================================
+# Operating System Artifacts
+# ==============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+thumbs.db
+[Dd]esktop.ini
+
+# ==============================================================================
+# Python Caches, Virtual Environments & Test Artifacts
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.tmp_tests/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+env/
+
+# ==============================================================================
+# C / C++ Build Artifacts, Intermediates & Compilers
+# ==============================================================================
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.log
+
+# Root and subproject build directories
 build*/
+build_mmp/
+cmake-build-*/
 butterscotch/build*/
 butterscotch/.cache/
 butterscotch/CMakeUserPresets.json
@@ -27,11 +79,32 @@ butterscotch/compat/config.mk
 butterscotch/.devcontainer/
 butterscotch/*.log
 
-*.zip
+# Test binaries
+tests/test_pacing
+tests/test_audio
+tests/test_audio_fixes
+tests/test_neon
+tests/test_renderer_fixes
+tests/test_opcodes
+tests/test_vm_fixes
 
-# Proprietary game assets (Clean-Room BYOD)
+# Root binary (if built directly in workspace root)
+/RiskOfRain
+# Exception: keep precompiled release port binary for OnionOS in dist
+!dist/Roms/PORTS/Games/Risk of Rain/RiskOfRain
+
+# ==============================================================================
+# Archives & Temporary Packages
+# ==============================================================================
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+tmp/
+
+# ==============================================================================
+# Proprietary Game Assets (Clean-Room / BYOD Policy)
+# ==============================================================================
 *.win
 *.ogg
 Save.ini
-
-tmp/
