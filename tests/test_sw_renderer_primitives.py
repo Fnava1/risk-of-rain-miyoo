@@ -135,6 +135,43 @@ class TestSWRendererPrimitives(unittest.TestCase):
                     self.assertGreaterEqual(dist, r_inner - 3.0)
                     self.assertLessEqual(dist, r_outer + 3.0)
 
+    def test_sw_renderer_textured_primitives_implemented(self):
+        """sw_renderer.c must implement textured triangle rasterization for planet/annular strips."""
+        with open(SW_RENDERER_C, "r", encoding="utf-8") as f:
+            src = f.read()
+
+        self.assertIn("sw_rasterize_triangle_textured", src,
+                      "sw_renderer.c must implement sw_rasterize_triangle_textured")
+        self.assertIn("float u, v;", src,
+                      "SWVertex must store UV texture coordinates")
+        self.assertIn("vert->u = u;", src,
+                      "swDrawVertex must record vertex U coordinate")
+        self.assertIn("vert->v = v;", src,
+                      "swDrawVertex must record vertex V coordinate")
+        self.assertIn("bool isTextured = (sw->primTexture > 0);", src,
+                      "swPrimitiveEnd must detect textured primitives")
+
+    def test_default_preferences_scale_and_volume(self):
+        """Prefs.ini and setup_miyoo.c must default zoom to 1.5x and volume to 100%."""
+        prefs_path = os.path.join(REPO_ROOT, "dist", "Roms", "PORTS", "Games", "Risk of Rain", "Prefs.ini")
+        setup_c = os.path.join(REPO_ROOT, "src", "setup", "setup_miyoo.c")
+
+        self.assertTrue(os.path.exists(prefs_path), f"Missing {prefs_path}")
+        with open(prefs_path, "r", encoding="utf-8") as f:
+            prefs = f.read()
+
+        self.assertIn("scale=1.5", prefs, "Prefs.ini must default scale to 1.5")
+        self.assertIn("volume=1.0", prefs, "Prefs.ini must default volume to 1.0")
+        self.assertIn("music_volume=1.0", prefs, "Prefs.ini must default music_volume to 1.0")
+
+        self.assertTrue(os.path.exists(setup_c), f"Missing {setup_c}")
+        with open(setup_c, "r", encoding="utf-8") as f:
+            setup = f.read()
+
+        self.assertIn("scale=1.5", setup, "setup_miyoo.c must default scale to 1.5")
+        self.assertIn("volume=1.0", setup, "setup_miyoo.c must default volume to 1.0")
+        self.assertIn("music_volume=1.0", setup, "setup_miyoo.c must default music_volume to 1.0")
+
 
 if __name__ == "__main__":
     unittest.main()

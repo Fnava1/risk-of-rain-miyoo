@@ -8884,6 +8884,16 @@ static RValue builtin_ini_read_real(VMContext* ctx, RValue* args, int32_t argCou
             if (strcmp(section, "Video Options") == 0 && strcmp(key, "graphics") == 0) {
                 return RValue_makeReal(1.0); // Low
             }
+            if (strcmp(section, "Video Options") == 0 && strcmp(key, "scale") == 0) {
+                runner->handheldScale = 1.5f;
+                return RValue_makeReal(1.5); // Handheld zoom 1.5x
+            }
+            if (strcmp(section, "Video Options") == 0 && strcmp(key, "volume") == 0) {
+                return RValue_makeReal(1.0); // 100% volume
+            }
+            if (strcmp(section, "Video Options") == 0 && strcmp(key, "music_volume") == 0) {
+                return RValue_makeReal(1.0); // 100% music
+            }
             if (strcmp(section, "Joystick") == 0 && strcmp(key, "joystick_on") == 0) {
                 return RValue_makeReal(1.0); // Enabled
             }

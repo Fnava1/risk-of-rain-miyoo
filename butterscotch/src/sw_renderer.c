@@ -93,6 +93,7 @@ typedef struct {
 
 typedef struct {
     float x, y;
+    float u, v;
     uint32_t color;
     float alpha;
 } SWVertex;
@@ -1159,6 +1160,161 @@ static void sw_rasterize_triangle(SWRenderer *sw, float x0, float y0, float x1, 
     }
 }
 
+static void sw_rasterize_triangle_textured(SWRenderer *sw, const SWVertex *v0, const SWVertex *v1, const SWVertex *v2) {
+    if (!sw->currentTarget) return;
+    float alpha = v2->alpha;
+    if (alpha <= 0.0f) return;
+
+    if (sw->primTexture <= 0) {
+        sw_rasterize_triangle(sw, v0->x, v0->y, v1->x, v1->y, v2->x, v2->y, v2->color, alpha);
+        return;
+    }
+
+    int32_t tpagIndex = sw->primTexture - 1;
+    DataWin *dw = sw->base.dataWin;
+    if (!dw || tpagIndex < 0 || (uint32_t)tpagIndex >= dw->tpag.count) {
+        sw_rasterize_triangle(sw, v0->x, v0->y, v1->x, v1->y, v2->x, v2->y, v2->color, alpha);
+        return;
+    }
+
+    TexturePageItem *tpag = &dw->tpag.items[tpagIndex];
+    int16_t pageId = tpag->texturePageId;
+    if (pageId < 0 || !ensureTextureLoaded(sw, (uint32_t)pageId)) {
+        sw_rasterize_triangle(sw, v0->x, v0->y, v1->x, v1->y, v2->x, v2->y, v2->color, alpha);
+        return;
+    }
+
+    SWTexturePage *page = &sw->pages[pageId];
+    if (!page->rgb || page->width <= 0 || page->height <= 0) return;
+
+    int pageW = page->width;
+    uint16_t *srcRgb = page->rgb;
+    uint8_t *srcAlpha = page->alpha;
+    int srcX = tpag->sourceX;
+    int srcY = tpag->sourceY;
+    int srcW = tpag->sourceWidth;
+    int srcH = tpag->sourceHeight;
+    if (srcW <= 0 || srcH <= 0) return;
+
+    uint32_t color = v2->color;
+    uint8_t tr = color & 0xFF;
+    uint8_t tg = (color >> 8) & 0xFF;
+    uint8_t tb = (color >> 16) & 0xFF;
+    bool needsTint = (tr != 255 || tg != 255 || tb != 255);
+
+    float x0 = v0->x, y0 = v0->y, u0 = v0->u, vert_v0 = v0->v;
+    float x1 = v1->x, y1 = v1->y, u1 = v1->u, vert_v1 = v1->v;
+    float x2 = v2->x, y2 = v2->y, u2 = v2->u, vert_v2 = v2->v;
+
+    float dx1 = x1 - x0;
+    float dy1 = y1 - y0;
+    float dx2 = x2 - x0;
+    float dy2 = y2 - y0;
+
+    float det = dx1 * dy2 - dx2 * dy1;
+    if (fabsf(det) < 0.0001f) return;
+
+    float invDet = 1.0f / det;
+    float du1 = u1 - u0;
+    float du2 = u2 - u0;
+    float dv1 = vert_v1 - vert_v0;
+    float dv2 = vert_v2 - vert_v0;
+
+    float dudx = (du1 * dy2 - du2 * dy1) * invDet;
+    float dudy = (du2 * dx1 - du1 * dx2) * invDet;
+    float dvdx = (dv1 * dy2 - dv2 * dy1) * invDet;
+    float dvdy = (dv2 * dx1 - dv1 * dx2) * invDet;
+
+    // Sort vertices by Y ascending for scanline bounds: py0 <= py1 <= py2
+    float px0 = x0, py0 = y0;
+    float px1 = x1, py1 = y1;
+    float px2 = x2, py2 = y2;
+
+    if (py0 > py1) { float tx = px0; px0 = px1; px1 = tx; float ty = py0; py0 = py1; py1 = ty; }
+    if (py0 > py2) { float tx = px0; px0 = px2; px2 = tx; float ty = py0; py0 = py2; py2 = ty; }
+    if (py1 > py2) { float tx = px1; px1 = px2; px2 = tx; float ty = py1; py1 = py2; py2 = ty; }
+
+    int y_start = (int)ceilf(py0);
+    int y_end   = (int)floorf(py2);
+
+    if (y_start < sw->clipY0) y_start = sw->clipY0;
+    if (y_end >= sw->clipY1)  y_end = sw->clipY1 - 1;
+    if (y_start > y_end) return;
+
+    float total_height = py2 - py0;
+    if (total_height <= 0.0001f) return;
+
+    int stride = sw->targetWidth;
+    int32_t stepU = (int32_t)roundf(dudx * 65536.0f);
+    int32_t stepV = (int32_t)roundf(dvdx * 65536.0f);
+    uint32_t ga_int = (uint32_t)(alpha * 255.0f);
+
+    for (int y = y_start; y <= y_end; y++) {
+        float fy = (float)y;
+        float alpha_long = (fy - py0) / total_height;
+        float x_long = px0 + (px2 - px0) * alpha_long;
+
+        float x_short;
+        if (fy < py1) {
+            float seg_h = py1 - py0;
+            x_short = (seg_h <= 0.0001f) ? px0 : px0 + (px1 - px0) * ((fy - py0) / seg_h);
+        } else {
+            float seg_h = py2 - py1;
+            x_short = (seg_h <= 0.0001f) ? px1 : px1 + (px2 - px1) * ((fy - py1) / seg_h);
+        }
+
+        int x_min = (int)ceilf(fminf(x_long, x_short));
+        int x_max = (int)floorf(fmaxf(x_long, x_short));
+
+        if (x_min > x_max) {
+            int x_mid = (int)roundf((x_long + x_short) * 0.5f);
+            if (x_mid >= sw->clipX0 && x_mid < sw->clipX1) {
+                x_min = x_mid;
+                x_max = x_mid;
+            } else {
+                continue;
+            }
+        }
+
+        if (x_min < sw->clipX0) x_min = sw->clipX0;
+        if (x_max >= sw->clipX1) x_max = sw->clipX1 - 1;
+        if (x_min > x_max) continue;
+
+        float startU = u0 + ((float)x_min - x0) * dudx + (fy - y0) * dudy;
+        float startV = vert_v0 + ((float)x_min - x0) * dvdx + (fy - y0) * dvdy;
+        int32_t fixU = (int32_t)roundf(startU * 65536.0f);
+        int32_t fixV = (int32_t)roundf(startV * 65536.0f);
+
+        uint16_t *row = sw->currentTarget + y * stride;
+
+        for (int x = x_min; x <= x_max; x++) {
+            uint32_t u_frac = (uint32_t)fixU & 0xFFFF;
+            uint32_t v_frac = (uint32_t)fixV & 0xFFFF;
+
+            int tx = srcX + (int)((u_frac * (uint32_t)srcW) >> 16);
+            int ty = srcY + (int)((v_frac * (uint32_t)srcH) >> 16);
+
+            int sampleIdx = ty * pageW + tx;
+            uint8_t a = srcAlpha ? srcAlpha[sampleIdx] : 255;
+            if (a > 0) {
+                if (alpha < 0.999f) a = (uint8_t)((a * ga_int) >> 8);
+                if (a > 0) {
+                    uint16_t pix = srcRgb[sampleIdx];
+                    if (needsTint) pix = tint_rgb565(pix, tr, tg, tb);
+                    if (a == 255 || !sw->blendEnable) {
+                        row[x] = pix;
+                    } else {
+                        row[x] = blend_pixel_rgb565(row[x], pix, a);
+                    }
+                }
+            }
+
+            fixU += stepU;
+            fixV += stepV;
+        }
+    }
+}
+
 static void swDrawTriangle(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t color1, MAYBE_UNUSED uint32_t color2, MAYBE_UNUSED uint32_t color3, float alpha, bool outline) {
     SWRenderer *sw = (SWRenderer *)renderer;
     if (outline) {
@@ -1789,7 +1945,7 @@ static void swPrimitiveBeginTexture(Renderer *renderer, int32_t primitiveType, i
     sw->primVertexCount = 0;
 }
 
-static void swDrawVertex(Renderer *renderer, float x, float y, MAYBE_UNUSED float z, uint32_t color, float alpha, MAYBE_UNUSED float u, MAYBE_UNUSED float v) {
+static void swDrawVertex(Renderer *renderer, float x, float y, MAYBE_UNUSED float z, uint32_t color, float alpha, float u, float v) {
     SWRenderer *sw = (SWRenderer *)renderer;
     if (sw->primVertexCount >= sw->primVertexCapacity) {
         int32_t newCap = sw->primVertexCapacity * 2;
@@ -1806,6 +1962,8 @@ static void swDrawVertex(Renderer *renderer, float x, float y, MAYBE_UNUSED floa
     SWVertex *vert = &sw->primVertices[sw->primVertexCount++];
     vert->x = sx;
     vert->y = sy;
+    vert->u = u;
+    vert->v = v;
     vert->color = color;
     vert->alpha = alpha;
 }
@@ -1817,6 +1975,7 @@ static void swPrimitiveEnd(Renderer *renderer) {
 
     SWVertex *v = sw->primVertices;
     int stride = sw->targetWidth;
+    bool isTextured = (sw->primTexture > 0);
 
     switch (sw->primType) {
         case PRIMITIVE_POINTS: {
@@ -1852,22 +2011,34 @@ static void swPrimitiveEnd(Renderer *renderer) {
         }
         case PRIMITIVE_TRIANGLES: {
             for (int32_t i = 0; i + 2 < count; i += 3) {
-                sw_rasterize_triangle(sw, v[i].x, v[i].y, v[i+1].x, v[i+1].y, v[i+2].x, v[i+2].y,
-                                      v[i+2].color, v[i+2].alpha);
+                if (isTextured) {
+                    sw_rasterize_triangle_textured(sw, &v[i], &v[i+1], &v[i+2]);
+                } else {
+                    sw_rasterize_triangle(sw, v[i].x, v[i].y, v[i+1].x, v[i+1].y, v[i+2].x, v[i+2].y,
+                                          v[i+2].color, v[i+2].alpha);
+                }
             }
             break;
         }
         case PRIMITIVE_TRIANGLE_STRIP: {
             for (int32_t i = 0; i + 2 < count; i++) {
-                sw_rasterize_triangle(sw, v[i].x, v[i].y, v[i+1].x, v[i+1].y, v[i+2].x, v[i+2].y,
-                                      v[i+2].color, v[i+2].alpha);
+                if (isTextured) {
+                    sw_rasterize_triangle_textured(sw, &v[i], &v[i+1], &v[i+2]);
+                } else {
+                    sw_rasterize_triangle(sw, v[i].x, v[i].y, v[i+1].x, v[i+1].y, v[i+2].x, v[i+2].y,
+                                          v[i+2].color, v[i+2].alpha);
+                }
             }
             break;
         }
         case PRIMITIVE_TRIANGLE_FAN: {
             for (int32_t i = 1; i + 1 < count; i++) {
-                sw_rasterize_triangle(sw, v[0].x, v[0].y, v[i].x, v[i].y, v[i+1].x, v[i+1].y,
-                                      v[i+1].color, v[i+1].alpha);
+                if (isTextured) {
+                    sw_rasterize_triangle_textured(sw, &v[0], &v[i], &v[i+1]);
+                } else {
+                    sw_rasterize_triangle(sw, v[0].x, v[0].y, v[i].x, v[i].y, v[i+1].x, v[i+1].y,
+                                          v[i+1].color, v[i+1].alpha);
+                }
             }
             break;
         }
@@ -1876,6 +2047,7 @@ static void swPrimitiveEnd(Renderer *renderer) {
     }
 
     sw->primVertexCount = 0;
+    sw->primTexture = -1;
 }
 
 static void swGpuSetShader(MAYBE_UNUSED Renderer *renderer, MAYBE_UNUSED int32_t shaderIndex) {}
@@ -1896,20 +2068,51 @@ static uint32_t swSurfaceGetTexture(MAYBE_UNUSED Renderer *renderer, int32_t sur
 }
 static float swTextureGetTexelWidth(Renderer *renderer, uint32_t texID) {
     SWRenderer *sw = (SWRenderer *)renderer;
+    DataWin *dw = renderer->dataWin;
+    if (texID > 0 && dw && (texID - 1) < dw->tpag.count) {
+        int16_t pageId = dw->tpag.items[texID - 1].texturePageId;
+        if (pageId >= 0) {
+            ensureTextureLoaded(sw, (uint32_t)pageId);
+            if ((uint32_t)pageId < sw->pageCount && sw->pages[pageId].width > 0) {
+                return 1.0f / (float)sw->pages[pageId].width;
+            }
+        }
+    }
     if (texID > 0 && texID <= sw->pageCount && sw->pages[texID - 1].width > 0) {
         return 1.0f / (float)sw->pages[texID - 1].width;
     }
-    return 1.0f;
+    return 1.0f / 2048.0f;
 }
 static float swTextureGetTexelHeight(Renderer *renderer, uint32_t texID) {
     SWRenderer *sw = (SWRenderer *)renderer;
+    DataWin *dw = renderer->dataWin;
+    if (texID > 0 && dw && (texID - 1) < dw->tpag.count) {
+        int16_t pageId = dw->tpag.items[texID - 1].texturePageId;
+        if (pageId >= 0) {
+            ensureTextureLoaded(sw, (uint32_t)pageId);
+            if ((uint32_t)pageId < sw->pageCount && sw->pages[pageId].height > 0) {
+                return 1.0f / (float)sw->pages[pageId].height;
+            }
+        }
+    }
     if (texID > 0 && texID <= sw->pageCount && sw->pages[texID - 1].height > 0) {
         return 1.0f / (float)sw->pages[texID - 1].height;
     }
-    return 1.0f;
+    return 1.0f / 2048.0f;
 }
 static bool swTextureGetUVs(MAYBE_UNUSED Renderer *renderer, MAYBE_UNUSED uint32_t texID, float *outUVs) {
     if (!outUVs) return false;
+    DataWin *dw = renderer->dataWin;
+    if (texID > 0 && dw && (texID - 1) < dw->tpag.count) {
+        TexturePageItem *tpag = &dw->tpag.items[texID - 1];
+        float invW = renderer->vtable->textureGetTexelWidth(renderer, texID);
+        float invH = renderer->vtable->textureGetTexelHeight(renderer, texID);
+        outUVs[0] = (float)tpag->sourceX * invW;
+        outUVs[1] = (float)tpag->sourceY * invH;
+        outUVs[2] = (float)(tpag->sourceX + tpag->sourceWidth) * invW;
+        outUVs[3] = (float)(tpag->sourceY + tpag->sourceHeight) * invH;
+        return true;
+    }
     outUVs[0] = 0.0f; outUVs[1] = 0.0f; outUVs[2] = 1.0f; outUVs[3] = 1.0f;
     return true;
 }

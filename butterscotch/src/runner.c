@@ -2669,7 +2669,7 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
     runner->freeCamPanX = 0.0f;
     runner->freeCamPanY = 0.0f;
     runner->freeCamZoom = 1.0f;
-    runner->handheldScale = 1.0f;
+    runner->handheldScale = 1.5f;
     runner->applicationSurfaceId = APPLICATION_SURFACE_ID;
     renderer->runner = runner;
     runner->viewportW = 1;

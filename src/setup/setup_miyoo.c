@@ -143,7 +143,9 @@ static void ensure_clean_prefs_ini(void) {
         if (f) {
             fprintf(f, "[Video Options]\n");
             fprintf(f, "graphics=1.0\n");
-            fprintf(f, "scale=1.0\n");
+            fprintf(f, "scale=1.5\n");
+            fprintf(f, "volume=1.0\n");
+            fprintf(f, "music_volume=1.0\n");
             fprintf(f, "fullscreen=0.0\n");
             fprintf(f, "\n");
             fprintf(f, "[Controls (Gamepad)]\n");
