@@ -1,4 +1,4 @@
-# Risk of Rain (2013) — Miyoo Mini Plus Port
+# Risk of Rain (2013) — Miyoo Mini Port
 
 [![Engine](https://img.shields.io/badge/Engine-Butterscotch%20GMS1.4-orange.svg)](https://github.com/ButterscotchRunner/Butterscotch)
 [![Clean-Room](https://img.shields.io/badge/Policy-Clean--Room%20BYOD-green.svg)]()
