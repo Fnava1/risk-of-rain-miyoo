@@ -74,6 +74,29 @@ static inline uint16_t blend_pixel_rgb565(uint16_t d, uint16_t s, uint8_t alpha)
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
+static inline uint16_t blend_pixel_rgb565_add(uint16_t d, uint16_t s, uint8_t alpha) {
+    if (alpha == 0) return d;
+    uint32_t a = (uint32_t)alpha + 1;
+    uint32_t s_r = (((s >> 11) & 0x1F) * a) >> 8;
+    uint32_t s_g = (((s >> 5) & 0x3F) * a) >> 8;
+    uint32_t s_b = ((s & 0x1F) * a) >> 8;
+
+    uint32_t r = ((d >> 11) & 0x1F) + s_r;
+    uint32_t g = ((d >> 5) & 0x3F) + s_g;
+    uint32_t b = (d & 0x1F) + s_b;
+
+    if (r > 31) r = 31;
+    if (g > 63) g = 63;
+    if (b > 31) b = 31;
+
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static inline uint16_t blend_pixel_rgb565_mode(uint16_t d, uint16_t s, uint8_t alpha, int32_t mode) {
+    if (mode == bm_add) return blend_pixel_rgb565_add(d, s, alpha);
+    return blend_pixel_rgb565(d, s, alpha);
+}
+
 // ===[ Texture Cache Structs ]===
 
 typedef struct {
@@ -499,7 +522,7 @@ static void blitSubRect(SWRenderer *sw, uint32_t pageId,
         int targetStride = sw->targetWidth;
         int pageStride = page->width;
 
-        if (!needsTint && globalAlpha >= 0.999f) {
+        if (!needsTint && globalAlpha >= 0.999f && sw->blendMode == bm_normal) {
             for (int r = 0; r < h; r++) {
                 uint16_t *d_ptr = target + (dy + r) * targetStride + dx;
                 const uint16_t *s_rgb = page->rgb + (sy + r) * pageStride + sx;
@@ -545,6 +568,19 @@ static void blitSubRect(SWRenderer *sw, uint32_t pageId,
                 const uint8_t  *s_alpha = page->alpha + (sy + r) * pageStride + sx;
 
                 for (int c = 0; c < w; c++) {
+                    uint8_t a = (uint8_t)((s_alpha[c] * ga_int) >> 8);
+                    if (a == 0) continue;
+                    uint16_t pix = needsTint ? blend_pixel_rgb565_tint(s_rgb[c], tr, tg, tb) : s_rgb[c];
+                    if (sw->blendMode == bm_add) {
+                        d_ptr[c] = blend_pixel_rgb565_add(d_ptr[c], pix, a);
+                    } else if (a == 255 && !needsTint && globalAlpha >= 0.999f) {
+                        d_ptr[c] = pix;
+                    } else {
+                        d_ptr[c] = blend_pixel_rgb565(d_ptr[c], pix, a);
+                    }
+                }
+            }
+        }
                     uint8_t a = s_alpha[c];
                     if (a == 0) continue;
                     if (globalAlpha < 0.999f) a = (uint8_t)((a * ga_int) >> 8);

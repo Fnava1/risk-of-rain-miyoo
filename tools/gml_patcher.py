@@ -208,6 +208,29 @@ def patch_stage_transition_pacing(code: str) -> str:
 
     return patched
 
+def patch_clay_man_ai(code: str) -> str:
+    """
+    Decimates collision_line raycasts in Clay Man AI (step_clay).
+    Staggers raycasting 1 out of 3 frames across instances using ((id + (current_time div 16)) % 3 == 0),
+    reducing raycast CPU load by 66% while preserving 60 FPS physics and motion. (Bug 8)
+    """
+    patched = code
+    if "collision_line" in patched:
+        guard = r'(((id + (current_time div 16)) % 3 == 0) && (\1))'
+        patched = re.sub(r'(\bcollision_line\s*\([^;]+?\))', guard, patched)
+    return patched
+
+def patch_boss_shadow_effects(code: str) -> str:
+    """
+    Throttles Providence Shadow clone (oBoss2Clone) particle emissions and redundant
+    additive alpha passes, preventing severe slowdown during final boss shadow phase. (Bug 10)
+    """
+    patched = code
+    if "part_particles_create" in patched:
+        wrap = r'if (((current_time div 16) % 2) == 0) { \1; }'
+        patched = re.sub(r'(\bpart_particles_create\s*\([^;]+;)', wrap, patched)
+    return patched
+
 def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
     """Apply targeted patches across all extracted GML scripts."""
     out = {}
@@ -225,5 +248,9 @@ def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
             patched = patch_command_artifact_grid_bounds(patched)
         elif any(k in name.lower() for k in ["storagemenu", "teleporter", "level", "transition"]):
             patched = patch_stage_transition_pacing(patched)
+        elif "clay" in name.lower():
+            patched = patch_clay_man_ai(patched)
+        elif "boss" in name.lower() or "clone" in name.lower():
+            patched = patch_boss_shadow_effects(patched)
         out[name] = patched
     return out
