@@ -5,6 +5,7 @@ Refined implementation:
 2. Guards expensive pathfinding calculations without halting entity gravity/physics.
 3. Batches floating damage text using real damage amounts (argument0).
 4. Fixes homing missile proximity detonation and Nematocyst Nozzle fallback when enemies are out of range.
+5. Clamps Artifact of Command item selection grid within visible viewport and HUD safe zone.
 """
 
 import re
@@ -139,6 +140,44 @@ def patch_nematocyst_and_missile_logic(code: str) -> str:
 
     return patched
 
+def patch_command_artifact_grid_bounds(code: str) -> str:
+    """
+    Clamps Artifact of Command item selection grid coordinates within the handheld viewport
+    (view_xview[0], view_yview[0], view_wview[0], view_hview[0]) and ensures elements
+    do not render behind the top-left HP bar / skills (safe HUD margin: 48px). (Bug 5)
+    """
+    patched = code
+
+    # Clamp draw_x or horizontal positioning
+    if "draw_x" in patched:
+        patched = re.sub(
+            r'(\b(?:var\s+)?draw_x\s*=\s*)([^;\n]+)(;)',
+            r'\1clamp(\2, view_xview[0] + 16, view_xview[0] + view_wview[0] - 16)\3',
+            patched
+        )
+    elif "x = " in patched and "view_xview" not in patched:
+        patched = re.sub(
+            r'(\bx\s*=\s*)([^;\n]+)(;)',
+            r'\1clamp(\2, view_xview[0] + 16, view_xview[0] + view_wview[0] - 16)\3',
+            patched
+        )
+
+    # Clamp draw_y or vertical positioning (with 48px HUD safe zone)
+    if "draw_y" in patched:
+        patched = re.sub(
+            r'(\b(?:var\s+)?draw_y\s*=\s*)([^;\n]+)(;)',
+            r'\1clamp(\2, view_yview[0] + 48, view_yview[0] + view_hview[0] - 16)\3',
+            patched
+        )
+    elif "y = " in patched and "view_yview" not in patched:
+        patched = re.sub(
+            r'(\by\s*=\s*)([^;\n]+)(;)',
+            r'\1clamp(\2, view_yview[0] + 48, view_yview[0] + view_hview[0] - 16)\3',
+            patched
+        )
+
+    return patched
+
 def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
     """Apply targeted patches across all extracted GML scripts."""
     out = {}
@@ -152,5 +191,7 @@ def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
             patched = patch_damage_text_batching(patched)
         elif any(k in name.lower() for k in ["jelly", "missile", "wurm", "use_item"]):
             patched = patch_nematocyst_and_missile_logic(patched)
+        elif any(k in name.lower() for k in ["artifact8", "select", "fairitem"]):
+            patched = patch_command_artifact_grid_bounds(patched)
         out[name] = patched
     return out
