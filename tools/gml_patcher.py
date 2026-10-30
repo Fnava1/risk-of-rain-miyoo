@@ -231,6 +231,39 @@ def patch_boss_shadow_effects(code: str) -> str:
         patched = re.sub(r'(\bpart_particles_create\s*\([^;]+;)', wrap, patched)
     return patched
 
+def patch_player_skill_watchdog(code: str) -> str:
+    """
+    Injects a failsafe watchdog for player activity state and clamps skill cooldowns (Bug 6):
+    - If activity != 0 for >180 frames without completing attack, resets activity = 0.
+    - Clamps skill2_cooldown <= 0 to 0 to prevent negative underflow locking Skill 2.
+    """
+    header = (
+        "// [MMP Fix] Player Skill 2 Watchdog & Underflow Guard\n"
+        "if (variable_instance_exists(id, \"activity\") && activity != 0) {\n"
+        "    if (!variable_instance_exists(id, \"__activity_watchdog\")) __activity_watchdog = 0;\n"
+        "    __activity_watchdog += 1;\n"
+        "    if (__activity_watchdog > 180) {\n"
+        "        activity = 0;\n"
+        "        __activity_watchdog = 0;\n"
+        "    }\n"
+        "} else {\n"
+        "    __activity_watchdog = 0;\n"
+        "}\n"
+        "if (variable_instance_exists(id, \"skill2_cooldown\") && skill2_cooldown <= 0) {\n"
+        "    skill2_cooldown = 0;\n"
+        "}\n"
+    )
+    patched = header + code
+
+    # Protect cooldown decrement if present
+    patched = re.sub(
+        r'(\bskill2_cooldown\s*-=\s*1\s*;)',
+        r'\1 if (skill2_cooldown <= 0) skill2_cooldown = 0;',
+        patched
+    )
+
+    return patched
+
 def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
     """Apply targeted patches across all extracted GML scripts."""
     out = {}
@@ -252,5 +285,7 @@ def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
             patched = patch_clay_man_ai(patched)
         elif "boss" in name.lower() or "clone" in name.lower():
             patched = patch_boss_shadow_effects(patched)
+        elif "player" in name.lower() and ("step" in name.lower() or "key" in name.lower()):
+            patched = patch_player_skill_watchdog(patched)
         out[name] = patched
     return out

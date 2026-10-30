@@ -996,8 +996,10 @@ void *platformGetProcAddress(const char *name) {
 #define MAP_KEY(state_var, prev_var, gml_key) do { \
     if ((state_var) && !(prev_var)) { \
         RunnerKeyboard_onKeyDown(g_runner->keyboard, (gml_key)); \
-    } else if (!(state_var) && (prev_var)) { \
-        RunnerKeyboard_onKeyUp(g_runner->keyboard, (gml_key)); \
+    } else if (!(state_var)) { \
+        if ((prev_var) || (g_runner->keyboard && g_runner->keyboard->keyState[(gml_key)])) { \
+            RunnerKeyboard_onKeyUp(g_runner->keyboard, (gml_key)); \
+        } \
     } \
 } while(0)
 
