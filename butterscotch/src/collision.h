@@ -27,7 +27,16 @@ typedef struct {
 // Returns the collision sprite for an instance (mask sprite if set, else display sprite)
 static inline Sprite* Collision_getSprite(DataWin* dataWin, Instance* inst) {
     int32_t sprIdx = (inst->maskIndex >= 0) ? inst->maskIndex : inst->spriteIndex;
-    if (0 > sprIdx || (uint32_t) sprIdx >= dataWin->sprt.count) return nullptr;
+    if (0 > sprIdx || (uint32_t) sprIdx >= dataWin->sprt.count) {
+        if (inst->objectIndex >= 0 && (uint32_t)inst->objectIndex < dataWin->objt.count) {
+            GameObject* obj = &dataWin->objt.objects[inst->objectIndex];
+            int32_t defIdx = (obj->textureMaskId >= 0) ? obj->textureMaskId : obj->spriteId;
+            if (defIdx >= 0 && (uint32_t)defIdx < dataWin->sprt.count) {
+                return &dataWin->sprt.sprites[defIdx];
+            }
+        }
+        return nullptr;
+    }
     return &dataWin->sprt.sprites[sprIdx];
 }
 
@@ -36,7 +45,11 @@ static inline InstanceBBox Collision_computeBBox(Runner* runner, Instance* inst)
     InstanceBBox ret;
     Sprite* spr = Collision_getSprite(runner->dataWin, inst);
     if (spr == nullptr) {
-        ZERO_STRUCT(ret);
+        ret.left = inst->x;
+        ret.right = inst->x;
+        ret.top = inst->y;
+        ret.bottom = inst->y;
+        ret.valid = true;
         return ret;
     }
 

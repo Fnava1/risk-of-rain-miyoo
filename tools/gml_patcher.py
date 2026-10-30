@@ -4,6 +4,7 @@ Refined implementation:
 1. Safely relocates Y-coordinates for HUD drawing (leaving X-coordinates and color parameters intact).
 2. Guards expensive pathfinding calculations without halting entity gravity/physics.
 3. Batches floating damage text using real damage amounts (argument0).
+4. Fixes homing missile proximity detonation and Nematocyst Nozzle fallback when enemies are out of range.
 """
 
 import re
@@ -93,6 +94,51 @@ def patch_damage_text_batching(damage_code: str) -> str:
         patched = replacement + damage_code
     return patched
 
+def patch_nematocyst_and_missile_logic(code: str) -> str:
+    """
+    Fixes homing missiles and Nematocyst Nozzle usable item (Bugs 1 and 9):
+    1. Ensures Nematocyst spawns missiles with a forward fan pattern if no target exists in 600px.
+    2. Ensures homing missiles (oJellyMissileFriendly, oEfMissileMagic) detonate on proximity
+       (point_distance <= max(16, speed + 4)) to prevent perpetual orbiting or sticking.
+    3. Guarantees Wurm missiles and body contact trigger damage against player/pFriend.
+    """
+    patched = code
+
+    # 1. Nematocyst empty target fallback
+    if 'oJellyMissileFriendly' in patched and 'else' not in patched:
+        fallback = (
+            " else {\n"
+            "        var fallback_angle = (image_xscale > 0) ? 0 : 180;\n"
+            "        repeat(6) {\n"
+            "            var m = instance_create(x, y, oJellyMissileFriendly);\n"
+            "            m.direction = fallback_angle + random_range(-30, 30);\n"
+            "            m.speed = 8;\n"
+            "        }\n"
+            "    }\n"
+        )
+        last_brace = patched.rfind('}')
+        if last_brace != -1:
+            patched = patched[:last_brace+1] + fallback + patched[last_brace+1:]
+        else:
+            patched += fallback
+
+    # 2. Homing missile proximity fallback (expand <= 10 to <= max(16, speed + 4))
+    patched = re.sub(
+        r'point_distance\s*\(\s*x\s*,\s*y\s*,\s*target\.x\s*,\s*target\.y\s*\)\s*<=\s*10\b',
+        'point_distance(x, y, target.x, target.y) <= max(16, speed + 4)',
+        patched
+    )
+
+    # 3. Wurm missiles and contact handling
+    if 'pFriend' in patched and 'place_meeting' in patched:
+        if 'point_distance' not in patched:
+            patched = patched.replace(
+                'place_meeting(x, y, pFriend)',
+                '(place_meeting(x, y, pFriend) || (instance_exists(pFriend) && point_distance(x, y, pFriend.x, pFriend.y) <= max(24, speed + 4)))'
+            )
+
+    return patched
+
 def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
     """Apply targeted patches across all extracted GML scripts."""
     out = {}
@@ -104,5 +150,7 @@ def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
             patched = inject_distance_decimation_guard(patched)
         elif "damage" in name.lower():
             patched = patch_damage_text_batching(patched)
+        elif any(k in name.lower() for k in ["jelly", "missile", "wurm", "use_item"]):
+            patched = patch_nematocyst_and_missile_logic(patched)
         out[name] = patched
     return out
