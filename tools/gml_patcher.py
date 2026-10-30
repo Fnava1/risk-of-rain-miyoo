@@ -178,6 +178,36 @@ def patch_command_artifact_grid_bounds(code: str) -> str:
 
     return patched
 
+def patch_stage_transition_pacing(code: str) -> str:
+    """
+    Optimizes stage transitions, room loading delays, and Item Log INI thrashing:
+    1. Consolidates ini_open/ini_close inside loops (like oStorageMenu) to open once outside.
+    2. Replaces abrupt audio_stop_all() before room_goto with smooth fade and transition pacing.
+    (Bugs 2, 3, 7)
+    """
+    patched = code
+
+    # 1. Consolidate ini_open/close inside loops
+    loop_ini_pattern = r'(for\s*\([^)]+\)\s*\{[\s\S]*?)(ini_open\s*\([^)]+\)\s*;)([\s\S]*?)(ini_close\s*\(\s*\)\s*;)([\s\S]*?\})'
+    m = re.search(loop_ini_pattern, patched)
+    if m:
+        ini_open_call = m.group(2)
+        ini_close_call = m.group(4)
+        loop_pre = m.group(1)
+        loop_body = m.group(3)
+        loop_post = m.group(5)
+        consolidated = f"{ini_open_call}\n{loop_pre}{loop_body}{loop_post}\n{ini_close_call}"
+        patched = patched[:m.start()] + consolidated + patched[m.end():]
+
+    # 2. Smooth audio transition before room_goto / room_goto_next
+    patched = re.sub(
+        r'audio_stop_all\s*\(\s*\)\s*;\s*(room_goto(?:_next)?\s*\([^)]*\)\s*;)',
+        r'audio_sound_gain(all, 0, 200); \1',
+        patched
+    )
+
+    return patched
+
 def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
     """Apply targeted patches across all extracted GML scripts."""
     out = {}
@@ -193,5 +223,7 @@ def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
             patched = patch_nematocyst_and_missile_logic(patched)
         elif any(k in name.lower() for k in ["artifact8", "select", "fairitem"]):
             patched = patch_command_artifact_grid_bounds(patched)
+        elif any(k in name.lower() for k in ["storagemenu", "teleporter", "level", "transition"]):
+            patched = patch_stage_transition_pacing(patched)
         out[name] = patched
     return out

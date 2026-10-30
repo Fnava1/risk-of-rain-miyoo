@@ -8873,11 +8873,11 @@ static RValue builtin_ini_close(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE
         return RValue_makeOwnedString(safeStrdup(""));
     }
 
-    // Serialize the current contents.
-    char* serialized = Ini_serialize(runner->currentIni, INI_SERIALIZE_DEFAULT_INITIAL_CAPACITY);
+    char* serialized = nullptr;
 
-    // Write back to disk only for file-backed INIs (ini_open).
+    // Write back to disk only for file-backed INIs (ini_open) when modified.
     if (runner->currentIniDirty && runner->currentIniPath != nullptr) {
+        serialized = Ini_serialize(runner->currentIni, INI_SERIALIZE_DEFAULT_INITIAL_CAPACITY);
         FileSystem* fs = runner->fileSystem;
         fs->vtable->writeFileText(fs, runner->currentIniPath, serialized);
     }
@@ -8889,6 +8889,9 @@ static RValue builtin_ini_close(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE
     runner->currentIni = nullptr;
     runner->currentIniPath = nullptr;
 
+    if (serialized == nullptr) {
+        serialized = safeStrdup("");
+    }
     return RValue_makeOwnedString(serialized); // takes ownership of serialized
 }
 
