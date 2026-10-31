@@ -1193,7 +1193,7 @@ static void mmp_osk_draw(uint16_t *fb, int tw, int th) {
     }
 
     // 4. Instructions footer
-    const char *footer = "A:Poner  Y:Borrar  B:Listo";
+    const char *footer = "A:Type  Y:Del  B:Done";
     int f_len = (int)strlen(footer);
     int fx = px + (pw - f_len * 8) / 2;
     font8x8_draw_string(fb, tw, th, fx, py + 138, footer, 0xCE79, 1); // soft light silver
