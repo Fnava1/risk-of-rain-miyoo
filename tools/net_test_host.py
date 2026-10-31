@@ -102,27 +102,43 @@ def run_test_server():
             client_sock, client_addr = tcp_server.accept()
             print(f"\n[+] ¡CONSOLA CONECTADA! -> IP: {client_addr[0]}:{client_addr[1]}")
             
-            # Responder al handshake
+            # Protocolo de Handshake GameMaker: Studio 1.4
             try:
                 client_sock.settimeout(5.0)
-                initial_data = client_sock.recv(1024)
-                if initial_data:
-                    print(f"    Recibidos {len(initial_data)} bytes iniciales: {initial_data.hex()[:32]}...")
-                    # Enviar ACK de handshake de prueba (Slot 2, 60 FPS)
-                    ack = struct.pack("<BBII", 0x02, 2, 60, 0x1337)
-                    client_sock.sendall(ack)
-                    print("    [✓] Handshake ACK enviado a la consola.")
+                # Paso 1: El servidor GM:S envía el saludo binario
+                client_sock.sendall(b"GM:Studio-Connect\x00")
+                
+                # Paso 2: Recibir respuesta de autenticación del cliente (16 bytes: 0xcafebabe, 0xdeadb00b)
+                stage2 = client_sock.recv(1024)
+                if stage2 and len(stage2) >= 16 and stage2[:4] == b"\xbe\xba\xfe\xca":
+                    # Paso 3: Servidor confirma con firma de sesión GM:S (12 bytes: 0xdeafbead, 0xf00dbeeb, 12)
+                    server_reply = struct.pack("<III", 0xdeafbead, 0xf00dbeeb, 12)
+                    client_sock.sendall(server_reply)
+                    print("    [✓] Handshake GameMaker: Studio 1.4 completado con éxito (0xcafebabe / 0xdeafbead).")
+                else:
+                    print(f"    [*] Conexión cruda recibida ({len(stage2) if stage2 else 0} bytes).")
 
-                # Mantener conexión y monitorear paquetes
+                # Mantener conexión y monitorear paquetes con framing 0xdeadc0de
                 packet_count = 0
                 while True:
                     data = client_sock.recv(4096)
                     if not data:
                         print(f"[-] Consola {client_addr[0]} se desconectó normalmente.")
                         break
-                    packet_count += 1
-                    if packet_count % 60 == 0:
-                        print(f"    [Sync] {packet_count} paquetes procesados a 60 FPS desde la consola.")
+                    
+                    # Deframing de paquetes GM:S
+                    if len(data) >= 12 and data[:4] == b"\xde\xc0\xad\xde":
+                        magic, hlen, plen = struct.unpack_from("<III", data, 0)
+                        payload = data[12:12+plen]
+                        packet_count += 1
+                        if packet_count == 1:
+                            print(f"    [GM:S Packet] Magic=0xdeadc0de PayloadLen={plen} PayloadHex={payload.hex()[:32]}...")
+                        elif packet_count % 60 == 0:
+                            print(f"    [Sync] {packet_count} paquetes GM:S procesados a 60 FPS desde la consola.")
+                    else:
+                        packet_count += 1
+                        if packet_count % 60 == 0:
+                            print(f"    [Sync] {packet_count} paquetes procesados desde la consola.")
             except socket.timeout:
                 print("    [!] Timeout esperando datos de la consola.")
             except Exception as e:
