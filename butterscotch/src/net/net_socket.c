@@ -21,6 +21,7 @@
 
 typedef enum {
     SOCKET_STATE_FREE = 0,
+    SOCKET_STATE_CREATED,
     SOCKET_STATE_CONNECTING,
     SOCKET_STATE_CONNECTED,
     SOCKET_STATE_LISTENING,
@@ -91,7 +92,7 @@ int32_t net_socket_create(int32_t type) {
 
     s_sockets[slot].fd = fd;
     s_sockets[slot].type = type;
-    s_sockets[slot].state = (type == NET_TYPE_UDP) ? SOCKET_STATE_CONNECTED : SOCKET_STATE_CONNECTING;
+    s_sockets[slot].state = (type == NET_TYPE_UDP) ? SOCKET_STATE_CONNECTED : SOCKET_STATE_CREATED;
     s_sockets[slot].remote_ip[0] = '\0';
     s_sockets[slot].remote_port = 0;
     s_sockets[slot].send_buf = sbuf;
@@ -121,7 +122,7 @@ int32_t net_connect_async(int32_t socketId, const char* ip, int32_t port) {
 
     int res = connect(s->fd, (struct sockaddr*)&addr, sizeof(addr));
     if (res == 0) {
-        s->state = SOCKET_STATE_CONNECTED;
+        s->state = SOCKET_STATE_CONNECTING; // Let poll emit NET_EVENT_CONNECT on next tick
         return 0;
     }
 
@@ -280,6 +281,44 @@ void net_poll_sockets(NetEventCallback on_event) {
         NetSocket* s = &s_sockets[id];
         short revents = pfds[n].revents;
 
+        /* Handle incoming data first even if POLLHUP is set to avoid dropping final packet */
+        if (s->state == SOCKET_STATE_CONNECTED && (revents & POLLIN)) {
+            if (s->type == NET_TYPE_TCP) {
+                ssize_t n = recv(s->fd, s_recv_buf, sizeof(s_recv_buf), 0);
+                if (n > 0) {
+                    if (on_event) {
+                        on_event(NET_EVENT_DATA, id, s->remote_ip, s->remote_port, s_recv_buf, (size_t)n);
+                    }
+                } else if (n == 0) {
+                    s->state = SOCKET_STATE_CLOSED;
+                    if (on_event) {
+                        on_event(NET_EVENT_DISCONNECT, id, s->remote_ip, s->remote_port, NULL, 0);
+                    }
+                    continue;
+                } else {
+                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                        s->state = SOCKET_STATE_CLOSED;
+                        if (on_event) {
+                            on_event(NET_EVENT_DISCONNECT, id, s->remote_ip, s->remote_port, NULL, 0);
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                struct sockaddr_in from;
+                socklen_t from_len = sizeof(from);
+                ssize_t n = recvfrom(s->fd, s_recv_buf, sizeof(s_recv_buf), 0, (struct sockaddr*)&from, &from_len);
+                if (n > 0) {
+                    char from_ip[64] = {0};
+                    inet_ntop(AF_INET, &from.sin_addr, from_ip, sizeof(from_ip));
+                    int32_t from_port = ntohs(from.sin_port);
+                    if (on_event) {
+                        on_event(NET_EVENT_DATA, id, from_ip, from_port, s_recv_buf, (size_t)n);
+                    }
+                }
+            }
+        }
+
         if (revents & (POLLHUP | POLLERR | POLLNVAL)) {
             if (s->state == SOCKET_STATE_CONNECTED || s->state == SOCKET_STATE_CONNECTING) {
                 s->state = SOCKET_STATE_CLOSED;
@@ -356,40 +395,6 @@ void net_poll_sockets(NetEventCallback on_event) {
             }
         }
 
-        /* Handle incoming data */
-        if (s->state == SOCKET_STATE_CONNECTED && (revents & POLLIN)) {
-            if (s->type == NET_TYPE_TCP) {
-                ssize_t n = recv(s->fd, s_recv_buf, sizeof(s_recv_buf), 0);
-                if (n > 0) {
-                    if (on_event) {
-                        on_event(NET_EVENT_DATA, id, s->remote_ip, s->remote_port, s_recv_buf, (size_t)n);
-                    }
-                } else if (n == 0) {
-                    s->state = SOCKET_STATE_CLOSED;
-                    if (on_event) {
-                        on_event(NET_EVENT_DISCONNECT, id, s->remote_ip, s->remote_port, NULL, 0);
-                    }
-                } else {
-                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                        s->state = SOCKET_STATE_CLOSED;
-                        if (on_event) {
-                            on_event(NET_EVENT_DISCONNECT, id, s->remote_ip, s->remote_port, NULL, 0);
-                        }
-                    }
-                }
-            } else {
-                struct sockaddr_in from;
-                socklen_t from_len = sizeof(from);
-                ssize_t n = recvfrom(s->fd, s_recv_buf, sizeof(s_recv_buf), 0, (struct sockaddr*)&from, &from_len);
-                if (n > 0) {
-                    char from_ip[64] = {0};
-                    inet_ntop(AF_INET, &from.sin_addr, from_ip, sizeof(from_ip));
-                    int32_t from_port = ntohs(from.sin_port);
-                    if (on_event) {
-                        on_event(NET_EVENT_DATA, id, from_ip, from_port, s_recv_buf, (size_t)n);
-                    }
-                }
-            }
-        }
+
     }
 }

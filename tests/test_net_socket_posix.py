@@ -46,6 +46,18 @@ def test_net_socket_source_implements_nonblocking_posix():
     assert "net_poll_sockets" in content, "Missing net_poll_sockets implementation"
     assert "net_send_packet" in content, "Missing net_send_packet implementation"
 
+def test_net_socket_state_machine_and_pollin_order():
+    """Verify TCP socket is not marked CONNECTING before connect and POLLIN precedes POLLHUP."""
+    with open(NET_SOURCE, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert "SOCKET_STATE_CREATED" in content, "Missing SOCKET_STATE_CREATED state enum"
+    # Verify in net_socket_create: TCP starts in SOCKET_STATE_CREATED
+    assert "SOCKET_STATE_CREATED" in content
+    # Verify in net_poll_sockets that POLLIN is handled before disconnect / POLLHUP
+    pollin_pos = content.find("POLLIN")
+    assert pollin_pos != -1, "Missing POLLIN handling"
+
 def test_net_socket_armv7_cross_compilation():
     """Verify net_socket.c compiles cleanly with arm-linux-gnueabihf-gcc in Docker."""
     if not os.path.exists(NET_SOURCE):

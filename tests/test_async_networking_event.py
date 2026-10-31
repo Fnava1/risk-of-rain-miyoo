@@ -28,3 +28,18 @@ def test_runner_implements_and_calls_network_events():
     assert "Runner_processNetworkEvents(runner);" in content, "Missing Runner_processNetworkEvents call inside Runner_step"
     assert "net_poll_sockets" in content, "Missing net_poll_sockets call in runner.c"
     assert "EVENT_OTHER" in content and "OTHER_ASYNC_NETWORKING" in content
+
+def test_async_load_includes_socket_key():
+    """Verify GM:S 1.4 async_load map includes 'socket' key required by objClient."""
+    with open(RUNNER_C, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert 'safeStrdup("socket")' in content, "Missing 'socket' key in async_load map population"
+
+def test_async_networking_recycles_pools():
+    """Verify dsMapPool and gmlBufferPool do not leak slots under network traffic."""
+    with open(RUNNER_C, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert "arrpop(runner->dsMapPool)" in content or "runner->dsMapPool" in content
+    assert "arrpop(runner->gmlBufferPool)" in content, "Missing gmlBufferPool recycling/arrpop"

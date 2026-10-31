@@ -4622,6 +4622,7 @@ static void on_network_socket_event(int32_t eventType, int32_t socketId, const c
 
     shput(*mapPtr, safeStrdup("type"), RValue_makeReal((GMLReal)gmType));
     shput(*mapPtr, safeStrdup("id"), RValue_makeReal((GMLReal)socketId));
+    shput(*mapPtr, safeStrdup("socket"), RValue_makeReal((GMLReal)socketId));
     shput(*mapPtr, safeStrdup("ip"), RValue_makeOwnedString(safeStrdup(ip ? ip : "")));
     shput(*mapPtr, safeStrdup("port"), RValue_makeReal((GMLReal)port));
 
@@ -4645,6 +4646,9 @@ static void on_network_socket_event(int32_t eventType, int32_t socketId, const c
         shfree(*mapPtr);
         *mapPtr = nullptr;
     }
+    if (mapId == (int32_t)arrlen(runner->dsMapPool) - 1) {
+        arrpop(runner->dsMapPool);
+    }
     runner->asyncLoadMapId = -1;
 
     // Clean up temporary packet buffer if allocated
@@ -4654,6 +4658,9 @@ static void on_network_socket_event(int32_t eventType, int32_t socketId, const c
             free(b->data);
             b->data = nullptr;
             b->isValid = false;
+        }
+        if (bufId == (int32_t)arrlen(runner->gmlBufferPool) - 1) {
+            arrpop(runner->gmlBufferPool);
         }
     }
 }

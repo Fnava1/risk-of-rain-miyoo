@@ -40,6 +40,16 @@ def test_prefs_ini_has_network_section():
     assert config.has_option("Network", "host_ip"), "Prefs.ini missing host_ip option"
     assert config.has_option("Network", "port"), "Prefs.ini missing port option"
 
+def test_miyoo_autoconnect_sets_global_client_ip_and_port():
+    """Verify miyoo.c sets global.client_ip and global.client_port for objClient."""
+    miyoo_c = os.path.join(os.path.dirname(__file__), "..", "butterscotch", "src", "backends", "miyoo.c")
+    with open(miyoo_c, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert "globalScopeInstance" in content, "Missing globalScopeInstance check in miyoo.c"
+    assert '"client_ip"' in content, "Missing 'client_ip' variable assignment in miyoo.c"
+    assert '"client_port"' in content, "Missing 'client_port' variable assignment in miyoo.c"
+
 def test_net_discovery_armv7_cross_compilation():
     """Verify net_discovery.c compiles cleanly with ARMv7 toolchain in Docker."""
     if not os.path.exists(DISCOVERY_C):
