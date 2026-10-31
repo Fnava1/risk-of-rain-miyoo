@@ -886,39 +886,64 @@ static void refreshDrawableDepths(Runner* runner, Drawable* drawables, int32_t c
 // Rebuilds runner->cachedDrawables when invalidated. Two-tier strategy:
 //   structureDirty - the SET of entries changed (instance/layer create or destroy, room change). Drop the cache and re-add every instance/tile/runtime-layer, then qsort.
 //   sortDirty only - the entries are the same but .depth values may have shifted. Refresh depths from the live sources and only qsort if the order actually broke.
+static inline bool isDebugMarkerObject(Runner* runner, int32_t objIdx) {
+    if (objIdx < 0 || runner->dataWin == nullptr || (uint32_t)objIdx >= runner->dataWin->objt.count) return false;
+    const char* name = runner->dataWin->objt.objects[objIdx].name;
+    if (name == nullptr) return false;
+    return (strcmp(name, "oB") == 0 ||
+            strcmp(name, "oBNoSpawn") == 0 ||
+            strcmp(name, "oBNoSpawn2") == 0 ||
+            strcmp(name, "oBNoSpawn3") == 0 ||
+            strcmp(name, "oRope") == 0);
+}
 static void rebuildDrawableCacheIfDirty(Runner* runner) {
     if (runner->drawableListStructureDirty) {
-        arrsetlen(runner->cachedDrawables, 0);
         Room* room = runner->currentRoom;
         if (room == nullptr) {
+            arrsetlen(runner->cachedDrawables, 0);
+            arrsetlen(runner->cachedDynamicDrawables, 0);
             runner->drawableListStructureDirty = false;
             runner->drawableListSortDirty = false;
             return;
         }
 
+        // 1. Build and sort static room tiles ONCE per room transition
+        if (!DataWin_isVersionAtLeast(runner->dataWin, 2, 0, 0, 0)) {
+            if (runner->cachedRoomTilesRoomIndex != runner->currentRoomIndex) {
+                arrsetlen(runner->cachedRoomTiles, 0);
+                repeat(room->tileCount, i) {
+                    RoomTile* tile = &room->tiles[i];
+                    Drawable d;
+                    ZERO_STRUCT(d);
+                    d.type = DRAWABLE_TILE;
+                    d.depth = tile->tileDepth;
+                    d.tileIndex = (int32_t) i;
+                    arrput(runner->cachedRoomTiles, d);
+                }
+                int32_t tCount = (int32_t) arrlen(runner->cachedRoomTiles);
+                if (tCount > 1) {
+                    qsort(runner->cachedRoomTiles, tCount, sizeof(Drawable), compareDrawables);
+                }
+                runner->cachedRoomTilesRoomIndex = runner->currentRoomIndex;
+            }
+        }
+
+        // 2. Collect dynamic instances (excluding collision debug blocks unless debug test is active)
+        arrsetlen(runner->cachedDynamicDrawables, 0);
         int32_t instanceCount = (int32_t) arrlen(runner->instances);
         repeat(instanceCount, i) {
             Instance* inst = runner->instances[i];
+            if (!runner->debug_test_active && isDebugMarkerObject(runner, inst->objectIndex)) continue;
             Drawable d;
             ZERO_STRUCT(d);
             d.type = DRAWABLE_INSTANCE;
             d.depth = inst->depth;
             d.instance = inst;
             refreshDrawableLayerOrder(runner, &d);
-            arrput(runner->cachedDrawables, d);
+            arrput(runner->cachedDynamicDrawables, d);
         }
 
-        if (!DataWin_isVersionAtLeast(runner->dataWin, 2, 0, 0, 0)) {
-            repeat(room->tileCount, i) {
-                RoomTile* tile = &room->tiles[i];
-                Drawable d;
-                ZERO_STRUCT(d);
-                d.type = DRAWABLE_TILE;
-                d.depth = tile->tileDepth;
-                d.tileIndex = (int32_t) i;
-                arrput(runner->cachedDrawables, d);
-            }
-        } else {
+        if (DataWin_isVersionAtLeast(runner->dataWin, 2, 0, 0, 0)) {
             size_t runtimeLayersCount = arrlenu(runner->runtimeLayers);
             repeat(runtimeLayersCount, i) {
                 RuntimeLayer* runtimeLayer = &runner->runtimeLayers[i];
@@ -928,13 +953,11 @@ static void rebuildDrawableCacheIfDirty(Runner* runner) {
                 d.depth = runtimeLayer->depth;
                 d.runtimeLayerId = (int32_t) runtimeLayer->id;
                 refreshDrawableLayerOrder(runner, &d);
-                arrput(runner->cachedDrawables, d);
+                arrput(runner->cachedDynamicDrawables, d);
             }
         }
 
-        // Particle systems are not room-scoped: a system created in one room keeps running until the
-        // game destroys it, so they are re-added on every rebuild rather than tracked per room.
-        {
+        // Particle systems
         repeat((int32_t) arrlen(runner->particleSystemPool), i) {
             ParticleSystem* particleSystem = &runner->particleSystemPool[i];
             if (!particleSystem->used || !particleSystem->automaticDraw) continue;
@@ -943,25 +966,74 @@ static void rebuildDrawableCacheIfDirty(Runner* runner) {
             d.type = DRAWABLE_PARTICLE_SYSTEM;
             d.depth = particleSystem->depth;
             d.particleSystemId = (int32_t) i;
-            arrput(runner->cachedDrawables, d);
-        }
+            arrput(runner->cachedDynamicDrawables, d);
         }
 
-        int32_t count = (int32_t) arrlen(runner->cachedDrawables);
-        if (count > 1) {
-            qsort(runner->cachedDrawables, count, sizeof(Drawable), compareDrawables);
+        // 3. Sort dynamic drawables (~50-250 items, takes < 0.01 ms!)
+        int32_t dCount = (int32_t) arrlen(runner->cachedDynamicDrawables);
+        if (dCount > 1) {
+            qsort(runner->cachedDynamicDrawables, dCount, sizeof(Drawable), compareDrawables);
         }
+
+        // 4. Merge pre-sorted room tiles and sorted dynamic drawables into cachedDrawables
+        int32_t tCount = (int32_t) arrlen(runner->cachedRoomTiles);
+        if (tCount == 0) {
+            arrsetlen(runner->cachedDrawables, dCount);
+            if (dCount > 0) {
+                memcpy(runner->cachedDrawables, runner->cachedDynamicDrawables, (size_t) dCount * sizeof(Drawable));
+            }
+        } else if (dCount == 0) {
+            arrsetlen(runner->cachedDrawables, tCount);
+            memcpy(runner->cachedDrawables, runner->cachedRoomTiles, (size_t) tCount * sizeof(Drawable));
+        } else {
+            arrsetlen(runner->cachedDrawables, tCount + dCount);
+            int32_t ti = 0, di = 0, outIdx = 0;
+            while (ti < tCount && di < dCount) {
+                if (compareDrawables(&runner->cachedRoomTiles[ti], &runner->cachedDynamicDrawables[di]) <= 0) {
+                    runner->cachedDrawables[outIdx++] = runner->cachedRoomTiles[ti++];
+                } else {
+                    runner->cachedDrawables[outIdx++] = runner->cachedDynamicDrawables[di++];
+                }
+            }
+            while (ti < tCount) runner->cachedDrawables[outIdx++] = runner->cachedRoomTiles[ti++];
+            while (di < dCount) runner->cachedDrawables[outIdx++] = runner->cachedDynamicDrawables[di++];
+        }
+
         runner->drawableListStructureDirty = false;
         runner->drawableListSortDirty = false;
         return;
     }
 
     if (runner->drawableListSortDirty) {
-        int32_t count = (int32_t) arrlen(runner->cachedDrawables);
-        refreshDrawableDepths(runner, runner->cachedDrawables, count);
-        if (count > 1 && !isDrawableArraySorted(runner->cachedDrawables, count)) {
-            qsort(runner->cachedDrawables, count, sizeof(Drawable), compareDrawables);
+        int32_t dCount = (int32_t) arrlen(runner->cachedDynamicDrawables);
+        refreshDrawableDepths(runner, runner->cachedDynamicDrawables, dCount);
+        if (dCount > 1 && !isDrawableArraySorted(runner->cachedDynamicDrawables, dCount)) {
+            qsort(runner->cachedDynamicDrawables, dCount, sizeof(Drawable), compareDrawables);
         }
+
+        int32_t tCount = (int32_t) arrlen(runner->cachedRoomTiles);
+        if (tCount == 0) {
+            arrsetlen(runner->cachedDrawables, dCount);
+            if (dCount > 0) {
+                memcpy(runner->cachedDrawables, runner->cachedDynamicDrawables, (size_t) dCount * sizeof(Drawable));
+            }
+        } else if (dCount == 0) {
+            arrsetlen(runner->cachedDrawables, tCount);
+            memcpy(runner->cachedDrawables, runner->cachedRoomTiles, (size_t) tCount * sizeof(Drawable));
+        } else {
+            arrsetlen(runner->cachedDrawables, tCount + dCount);
+            int32_t ti = 0, di = 0, outIdx = 0;
+            while (ti < tCount && di < dCount) {
+                if (compareDrawables(&runner->cachedRoomTiles[ti], &runner->cachedDynamicDrawables[di]) <= 0) {
+                    runner->cachedDrawables[outIdx++] = runner->cachedRoomTiles[ti++];
+                } else {
+                    runner->cachedDrawables[outIdx++] = runner->cachedDynamicDrawables[di++];
+                }
+            }
+            while (ti < tCount) runner->cachedDrawables[outIdx++] = runner->cachedRoomTiles[ti++];
+            while (di < dCount) runner->cachedDrawables[outIdx++] = runner->cachedDynamicDrawables[di++];
+        }
+
         runner->drawableListSortDirty = false;
     }
 }
@@ -1003,6 +1075,7 @@ static bool isArtifact8Box(Runner* runner, int32_t objectIndex) {
 
 static void drawInstanceNormally(Runner* runner, Instance* inst) {
     if (runner->drawEnabled) {
+        if (!runner->debug_test_active && isDebugMarkerObject(runner, inst->objectIndex)) return;
         bool isArtifact8 = isArtifact8Box(runner, inst->objectIndex);
         float origX = inst->x;
         float origY = inst->y;
@@ -1110,55 +1183,10 @@ void Runner_draw(Runner* runner) {
 
     fireDrawSubtype(runner, runner->cachedDrawables, drawableCount, DRAW_BEGIN);
 
-    // Draw interleaved tiles and instances
-    int32_t i = 0;
-    DrawKey lastProcessedDrawKey;
-
-    while (true) {
-        if (runner->drawableListSortDirty || runner->drawableListStructureDirty) {
-            rebuildDrawableCacheIfDirty(runner);
-
-            if (i != 0) {
-                // Something created things during draw events! Figure out the new cursor position...
-                // lastProcessedDrawKey WILL already be set here, because this code will ONLY execute if we have at least processed at least ONE drawable
-                bool foundSomething = false;
-
-                repeat(arrlen(runner->cachedDrawables), j) {
-                    Drawable* drawable = &runner->cachedDrawables[j];
-
-                    DrawKey drawKey = drawableKey(drawable);
-
-                    int result = compareDrawKeys(&drawKey, &lastProcessedDrawKey);
-
-                    if (result == 0) {
-                        // Found exact match
-                        i = (int32_t) j + 1; // Skip one because we DON'T WANT to redraw something that was already drawn
-                        foundSomething = true;
-                        break;
-                    }
-
-                    if (result == 1) {
-                        // New key order is HIGHER than the current one, so we want to continue processing from here
-                        i = (int32_t) j;
-                        foundSomething = true;
-                        break;
-                    }
-                }
-
-                if (!foundSomething) {
-                    // We haven't found anything, we don't have anything more to draw, so bail!
-                    break;
-                }
-            }
-
-            drawableCount = arrlen(runner->cachedDrawables);
-        }
-
-        if (i >= drawableCount)
-            break;
-
-        Drawable* d = &runner->cachedDrawables[i++];
-        lastProcessedDrawKey = drawableKey(d);
+    // Draw interleaved tiles and instances in a clean linear pass
+    runner->inDrawLoop = true;
+    repeat(drawableCount, i) {
+        Drawable* d = &runner->cachedDrawables[i];
 
         if (d->type == DRAWABLE_TILE) {
             if (runner->renderer != nullptr) {
@@ -1394,6 +1422,7 @@ void Runner_draw(Runner* runner) {
             Runner_popLayerShader(runner, previousShader);
         }
     }
+    runner->inDrawLoop = false;
 
     fireDrawSubtype(runner, runner->cachedDrawables, drawableCount, DRAW_END);
 
@@ -1839,6 +1868,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     Physics_initRoom(runner);
     runner->viewsEnabled = (room->flags & 1) != 0;
     // Tile set, runtime layers, and instance list all change when entering a room.
+    runner->cachedRoomTilesRoomIndex = -1;
     runner->drawableListStructureDirty = true;
     // It could be the first time we are initializing the grid
     if (runner->spatialGrid != nullptr)
@@ -2542,6 +2572,10 @@ void Runner_reset(Runner* runner) {
     }
 
     arrsetlen(runner->cachedDrawables, 0);
+    arrsetlen(runner->cachedDynamicDrawables, 0);
+    arrsetlen(runner->cachedRoomTiles, 0);
+    runner->cachedRoomTilesRoomIndex = -1;
+    runner->inDrawLoop = false;
     runner->drawableListStructureDirty = true;
     runner->drawableListSortDirty = false;
 }
@@ -6048,6 +6082,10 @@ void Runner_free(Runner* runner) {
 
     arrfree(runner->cachedDrawables);
     runner->cachedDrawables = nullptr;
+    arrfree(runner->cachedDynamicDrawables);
+    runner->cachedDynamicDrawables = nullptr;
+    arrfree(runner->cachedRoomTiles);
+    runner->cachedRoomTiles = nullptr;
     arrfree(runner->instanceSnapshots);
     runner->instanceSnapshots = nullptr;
     arrfree(runner->eventDispatchInstances);

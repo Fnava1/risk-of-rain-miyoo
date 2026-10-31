@@ -14244,9 +14244,68 @@ static RValue builtin_collision_line(VMContext* ctx, RValue* args, int32_t argCo
         lx2 = compatRoundCoord(lx2); ly2 = compatRoundCoord(ly2);
     }
 
-    Instance* self = ctx->currentInstance;
+    if (targetObjIndex == INSTANCE_NOONE) return RValue_makeReal((GMLReal) INSTANCE_NOONE);
 
+    Instance* self = ctx->currentInstance;
     int32_t resultId = INSTANCE_NOONE;
+
+    if (runner->spatialGrid != nullptr) {
+        GMLReal bx1 = GMLReal_fmin(lx1, lx2);
+        GMLReal by1 = GMLReal_fmin(ly1, ly2);
+        GMLReal bx2 = GMLReal_fmax(lx1, lx2);
+        GMLReal by2 = GMLReal_fmax(ly1, ly2);
+
+        SpatialGrid_syncGrid(runner, runner->spatialGrid);
+        SpatialGridQuery query = SpatialGrid_prepareQuery(runner, bx1, by1, bx2, by2, targetObjIndex);
+
+        for (int32_t gx = query.range.minGridX; query.range.maxGridX >= gx && resultId == INSTANCE_NOONE; gx++) {
+            for (int32_t gy = query.range.minGridY; query.range.maxGridY >= gy && resultId == INSTANCE_NOONE; gy++) {
+                Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+                int32_t cellLen = (int32_t) arrlen(cell);
+                repeat(cellLen, ci) {
+                    Instance* inst = cell[ci];
+                    if (!inst->active) continue;
+                    if (notme && inst == self) continue;
+                    if (inst->lastCollisionQueryId == query.queryId) continue;
+                    inst->lastCollisionQueryId = query.queryId;
+
+                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
+                    if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
+
+                    if (!Collision_lineOverlapsInstance(ctx->runner, inst, lx1, ly1, lx2, ly2)) continue;
+
+                    if (prec != 0) {
+                        Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
+                        if (spr != nullptr && spr->sepMasks == 1 && spr->masks != nullptr && spr->maskCount > 0) {
+                            InstanceBBox bbox = Collision_computeBBox(ctx->runner, inst);
+                            GMLReal tEnter, tExit;
+                            if (!Collision_segmentVsAARectClip(lx1, ly1, lx2, ly2, bbox.left, bbox.top, bbox.right, bbox.bottom, &tEnter, &tExit)) continue;
+
+                            GMLReal dx = lx2 - lx1;
+                            GMLReal dy = ly2 - ly1;
+                            GMLReal segLen = GMLReal_sqrt(dx * dx + dy * dy);
+                            int32_t steps = (int32_t) GMLReal_ceil(segLen * (tExit - tEnter));
+                            if (steps < 1) steps = 1;
+
+                            bool found = false;
+                            for (int32_t s = 0; s <= steps && !found; s++) {
+                                GMLReal t = tEnter + (tExit - tEnter) * ((GMLReal) s / (GMLReal) steps);
+                                GMLReal px = lx1 + dx * t;
+                                GMLReal py = ly1 + dy * t;
+                                found = Collision_pointInInstance(spr, inst, px, py);
+                            }
+                            if (!found) continue;
+                        }
+                    }
+
+                    resultId = inst->instanceId;
+                    break;
+                }
+            }
+        }
+        return RValue_makeReal((GMLReal) resultId);
+    }
+
     int32_t snapBase = Runner_pushInstancesForTarget(runner, targetObjIndex);
     int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
     for (int32_t snapIdx = snapBase; snapEnd > snapIdx; snapIdx++) {
@@ -15061,9 +15120,46 @@ static RValue builtin_collision_point(VMContext* ctx, RValue* args, int32_t argC
         px = compatRoundCoord(px); py = compatRoundCoord(py);
     }
 
-    Instance* self = ctx->currentInstance;
+    if (targetObjIndex == INSTANCE_NOONE) return RValue_makeReal((GMLReal) INSTANCE_NOONE);
 
+    Instance* self = ctx->currentInstance;
     int32_t resultId = INSTANCE_NOONE;
+
+    if (runner->spatialGrid != nullptr) {
+        SpatialGrid_syncGrid(runner, runner->spatialGrid);
+        SpatialGridQuery query = SpatialGrid_prepareQuery(runner, px, py, px, py, targetObjIndex);
+
+        for (int32_t gx = query.range.minGridX; query.range.maxGridX >= gx && resultId == INSTANCE_NOONE; gx++) {
+            for (int32_t gy = query.range.minGridY; query.range.maxGridY >= gy && resultId == INSTANCE_NOONE; gy++) {
+                Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+                int32_t cellLen = (int32_t) arrlen(cell);
+                repeat(cellLen, ci) {
+                    Instance* inst = cell[ci];
+                    if (!inst->active) continue;
+                    if (notme && inst == self) continue;
+                    if (inst->lastCollisionQueryId == query.queryId) continue;
+                    inst->lastCollisionQueryId = query.queryId;
+
+                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
+                    if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
+
+                    if (!Collision_pointInsideInstanceBox(ctx->runner, inst, px, py)) continue;
+
+                    if (prec != 0) {
+                        Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
+                        if (Collision_hasFrameMasks(spr)) {
+                            if (!Collision_pointInInstance(spr, inst, px, py)) continue;
+                        }
+                    }
+
+                    resultId = inst->instanceId;
+                    break;
+                }
+            }
+        }
+        return RValue_makeReal((GMLReal) resultId);
+    }
+
     int32_t snapBase = Runner_pushInstancesForTarget(runner, targetObjIndex);
     int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
     for (int32_t snapIdx = snapBase; snapEnd > snapIdx; snapIdx++) {
@@ -15221,7 +15317,40 @@ static RValue builtin_instance_position(VMContext* ctx, RValue* args, int32_t ar
         px = compatRoundCoord(px); py = compatRoundCoord(py);
     }
 
+    if (targetObjIndex == INSTANCE_NOONE) return RValue_makeReal((GMLReal) INSTANCE_NOONE);
+
     int32_t resultId = INSTANCE_NOONE;
+
+    if (runner->spatialGrid != nullptr) {
+        SpatialGrid_syncGrid(runner, runner->spatialGrid);
+        SpatialGridQuery query = SpatialGrid_prepareQuery(runner, px, py, px, py, targetObjIndex);
+
+        for (int32_t gx = query.range.minGridX; query.range.maxGridX >= gx && resultId == INSTANCE_NOONE; gx++) {
+            for (int32_t gy = query.range.minGridY; query.range.maxGridY >= gy && resultId == INSTANCE_NOONE; gy++) {
+                Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+                int32_t cellLen = (int32_t) arrlen(cell);
+                repeat(cellLen, ci) {
+                    Instance* inst = cell[ci];
+                    if (!inst->active) continue;
+                    if (inst->lastCollisionQueryId == query.queryId) continue;
+                    inst->lastCollisionQueryId = query.queryId;
+
+                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
+                    if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
+
+                    if (!Collision_pointInsideInstanceBox(ctx->runner, inst, px, py)) continue;
+
+                    Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
+                    if (Collision_hasFrameMasks(spr) && !Collision_pointInInstance(spr, inst, px, py)) continue;
+
+                    resultId = inst->instanceId;
+                    break;
+                }
+            }
+        }
+        return RValue_makeReal((GMLReal) resultId);
+    }
+
     int32_t snapBase = Runner_pushInstancesForTarget(runner, targetObjIndex);
     int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
     for (int32_t i = snapBase; snapEnd > i; i++) {

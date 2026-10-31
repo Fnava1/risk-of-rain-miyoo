@@ -811,6 +811,10 @@ struct Runner {
     //   structureDirty - the SET of entries changed (instance/layer create or destroy, room change). Full rebuild.
     //   sortDirty      - the entries are the same but .depth values may have shifted. Refresh depths and only re-sort if order broke. Cheap when small depth shifts don't cross neighbors (typical depth=-y games).
     Drawable* cachedDrawables; // stb_ds array
+    Drawable* cachedDynamicDrawables; // stb_ds array
+    Drawable* cachedRoomTiles; // stb_ds array
+    int32_t cachedRoomTilesRoomIndex;
+    bool inDrawLoop;
     bool drawableListStructureDirty;
     bool drawableListSortDirty;
     // Struct instances created by @@NewGMLObject@@. Reuses Instance with objectIndex=STRUCT_OBJECT_INDEX.
