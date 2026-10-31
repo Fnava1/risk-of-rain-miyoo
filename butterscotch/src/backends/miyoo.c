@@ -1013,7 +1013,9 @@ static void mmp_set_instance_var(VMContext* ctx, Instance* inst, const char* nam
 
 static void mmp_check_network_autoconnect(Runner *runner) {
     if (!runner || !runner->instancesByObject || !runner->dataWin) return;
-    static bool s_discovery_attempted = false;
+    static int s_discovery_fd = -1;
+    static bool s_host_discovered = false;
+    static bool s_initial_init_done = false;
 
     static int32_t s_oHostClient_idx = -2;
     if (s_oHostClient_idx == -2) {
@@ -1031,45 +1033,40 @@ static void mmp_check_network_autoconnect(Runner *runner) {
         Instance **list = runner->instancesByObject[s_oHostClient_idx];
         if (list != NULL && arrlen(list) > 0) {
             Instance *hostClientInst = list[0];
-            if (!s_discovery_attempted) {
-                s_discovery_attempted = true;
+            if (!s_initial_init_done) {
+                s_initial_init_done = true;
                 char host_ip[64] = "192.168.4.1";
                 int32_t host_port = 11100;
 
-                // 1. Try UDP auto-discovery beacon (0ms non-blocking poll)
-                bool found = net_discovery_find_host(host_ip, &host_port, 0);
-                if (!found) {
-                    // 2. Fall back to Prefs.ini [Network] host_ip/client_ip and port/client_port
-                    FILE *f = fopen("Prefs.ini", "r");
-                    if (f) {
-                        char line[128];
-                        bool in_net = false;
-                        while (fgets(line, sizeof(line), f)) {
-                            if (strstr(line, "[Network]")) { in_net = true; continue; }
-                            if (in_net && line[0] == '[') break;
-                            if (in_net && (strstr(line, "host_ip") || strstr(line, "client_ip"))) {
-                                char *eq = strchr(line, '=');
-                                if (eq) {
-                                    char *val = eq + 1;
-                                    while (*val == ' ' || *val == '"') val++;
-                                    char *end = val + strlen(val) - 1;
-                                    while (end > val && (*end == '\n' || *end == '\r' || *end == ' ' || *end == '"')) *end-- = '\0';
-                                    if (strlen(val) > 0) strncpy(host_ip, val, sizeof(host_ip) - 1);
-                                }
-                            }
-                            if (in_net && (strstr(line, "port") || strstr(line, "client_port"))) {
-                                char *eq = strchr(line, '=');
-                                if (eq) {
-                                    int p = atoi(eq + 1);
-                                    if (p > 0) host_port = p;
-                                }
+                FILE *f = fopen("Prefs.ini", "r");
+                if (f) {
+                    char line[128];
+                    bool in_net = false;
+                    while (fgets(line, sizeof(line), f)) {
+                        if (strstr(line, "[Network]")) { in_net = true; continue; }
+                        if (in_net && line[0] == '[') break;
+                        if (in_net && (strstr(line, "host_ip") || strstr(line, "client_ip"))) {
+                            char *eq = strchr(line, '=');
+                            if (eq) {
+                                char *val = eq + 1;
+                                while (*val == ' ' || *val == '"') val++;
+                                char *end = val + strlen(val) - 1;
+                                while (end > val && (*end == '\n' || *end == '\r' || *end == ' ' || *end == '"')) *end-- = '\0';
+                                if (strlen(val) > 0) strncpy(host_ip, val, sizeof(host_ip) - 1);
                             }
                         }
-                        fclose(f);
+                        if (in_net && (strstr(line, "port") || strstr(line, "client_port"))) {
+                            char *eq = strchr(line, '=');
+                            if (eq) {
+                                int p = atoi(eq + 1);
+                                if (p > 0) host_port = p;
+                            }
+                        }
                     }
+                    fclose(f);
                 }
 
-                // Inject IP & port into global scope (global.client_ip / global.client_port) and instance
+                // Inject initial IP & port into global scope and instance
                 if (runner->vmContext && runner->vmContext->globalScopeInstance) {
                     mmp_set_instance_var(runner->vmContext, runner->vmContext->globalScopeInstance, "client_ip", RValue_makeString(host_ip));
                     mmp_set_instance_var(runner->vmContext, runner->vmContext->globalScopeInstance, "client_port", RValue_makeReal((GMLReal)host_port));
@@ -1080,9 +1077,38 @@ static void mmp_check_network_autoconnect(Runner *runner) {
                     mmp_set_instance_var(runner->vmContext, hostClientInst, "ip", RValue_makeString(host_ip));
                     mmp_set_instance_var(runner->vmContext, hostClientInst, "ip_address", RValue_makeString(host_ip));
                 }
+
+                // Open active non-blocking UDP discovery listener
+                s_discovery_fd = net_discovery_listener_open();
+            }
+
+            // Continously poll for broadcast beacon while in menu until host is discovered
+            if (s_discovery_fd >= 0 && !s_host_discovered) {
+                char disc_ip[64] = {0};
+                int32_t disc_port = 11100;
+                if (net_discovery_listener_poll(s_discovery_fd, disc_ip, &disc_port)) {
+                    s_host_discovered = true;
+                    if (runner->vmContext && runner->vmContext->globalScopeInstance) {
+                        mmp_set_instance_var(runner->vmContext, runner->vmContext->globalScopeInstance, "client_ip", RValue_makeString(disc_ip));
+                        mmp_set_instance_var(runner->vmContext, runner->vmContext->globalScopeInstance, "client_port", RValue_makeReal((GMLReal)disc_port));
+                    }
+                    if (runner->vmContext && hostClientInst) {
+                        mmp_set_instance_var(runner->vmContext, hostClientInst, "client_ip", RValue_makeString(disc_ip));
+                        mmp_set_instance_var(runner->vmContext, hostClientInst, "client_port", RValue_makeReal((GMLReal)disc_port));
+                        mmp_set_instance_var(runner->vmContext, hostClientInst, "ip", RValue_makeString(disc_ip));
+                        mmp_set_instance_var(runner->vmContext, hostClientInst, "ip_address", RValue_makeString(disc_ip));
+                    }
+                    net_discovery_listener_close(s_discovery_fd);
+                    s_discovery_fd = -1;
+                }
             }
         } else {
-            s_discovery_attempted = false;
+            if (s_discovery_fd >= 0) {
+                net_discovery_listener_close(s_discovery_fd);
+                s_discovery_fd = -1;
+            }
+            s_host_discovered = false;
+            s_initial_init_done = false;
         }
     }
 }

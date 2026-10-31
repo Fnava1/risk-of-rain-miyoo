@@ -27,23 +27,41 @@ def get_local_ip():
         s.close()
     return ip
 
+def get_broadcast_targets(local_ip):
+    targets = ['<broadcast>', '255.255.255.255']
+    if local_ip and local_ip != '127.0.0.1':
+        parts = local_ip.split('.')
+        if len(parts) == 4:
+            targets.append(f"{parts[0]}.{parts[1]}.{parts[2]}.255")
+    # Return unique targets preserving order
+    seen = set()
+    res = []
+    for t in targets:
+        if t not in seen:
+            seen.add(t)
+            res.append(t)
+    return res
+
 class BeaconBroadcaster(threading.Thread):
-    def __init__(self, host_name, port):
+    def __init__(self, host_name, port, local_ip):
         super().__init__(daemon=True)
         self.host_name = host_name
         self.port = port
+        self.local_ip = local_ip
         self.running = True
 
     def run(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         payload = f"{BEACON_MAGIC}:{self.host_name}:{self.port}".encode('utf-8')
+        targets = get_broadcast_targets(self.local_ip)
         while self.running:
-            try:
-                sock.sendto(payload, ('<broadcast>', UDP_BEACON_PORT))
-            except Exception:
-                pass
-            time.sleep(1.0)
+            for t in targets:
+                try:
+                    sock.sendto(payload, (t, UDP_BEACON_PORT))
+                except Exception:
+                    pass
+            time.sleep(0.5)
         sock.close()
 
     def stop(self):
@@ -69,7 +87,7 @@ def run_test_server():
     print("=" * 70)
 
     # Iniciar baliza UDP
-    beacon = BeaconBroadcaster("PC_Host_Tester", TCP_GAME_PORT)
+    beacon = BeaconBroadcaster("PC_Host_Tester", TCP_GAME_PORT, local_ip)
     beacon.start()
 
     # Iniciar servidor TCP

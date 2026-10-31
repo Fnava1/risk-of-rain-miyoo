@@ -12,6 +12,10 @@ extern "C" {
 #define ROR_DEFAULT_GAME_PORT 11100
 #define ROR_BEACON_MAGIC "RoR_BEACON:"
 
+int  net_discovery_listener_open(void);
+bool net_discovery_listener_poll(int fd, char* out_ip, int32_t* out_port);
+void net_discovery_listener_close(int fd);
+
 bool net_discovery_find_host(char* out_ip, int32_t* out_port, uint32_t timeout_ms);
 void net_discovery_broadcast_beacon(const char* server_name, int32_t port);
 

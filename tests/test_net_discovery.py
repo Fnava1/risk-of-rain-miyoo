@@ -16,6 +16,9 @@ def test_net_discovery_header_and_constants():
         content = f.read()
 
     assert "net_discovery_find_host" in content
+    assert "net_discovery_listener_open" in content
+    assert "net_discovery_listener_poll" in content
+    assert "net_discovery_listener_close" in content
     assert "net_discovery_broadcast_beacon" in content
     assert "ROR_DISCOVERY_PORT" in content
     assert "11101" in content
@@ -30,6 +33,8 @@ def test_net_discovery_source_implements_udp_beacon():
     assert "SO_BROADCAST" in content
     assert "recvfrom" in content
     assert "sendto" in content
+    assert "net_discovery_listener_open" in content
+    assert "net_discovery_listener_poll" in content
     assert "ROR_BEACON_MAGIC" in content or "RoR_BEACON:" in content
 
 def test_prefs_ini_has_network_section():

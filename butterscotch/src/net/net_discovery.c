@@ -31,17 +31,20 @@ void net_discovery_broadcast_beacon(const char* server_name, int32_t port) {
     close(fd);
 }
 
-bool net_discovery_find_host(char* out_ip, int32_t* out_port, uint32_t timeout_ms) {
-    if (!out_ip || !out_port) return false;
-
+int net_discovery_listener_open(void) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) return false;
+    if (fd < 0) return -1;
 
     int opt = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 #ifdef SO_REUSEPORT
     setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 #endif
+
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -51,8 +54,46 @@ bool net_discovery_find_host(char* out_ip, int32_t* out_port, uint32_t timeout_m
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         close(fd);
-        return false;
+        return -1;
     }
+    return fd;
+}
+
+bool net_discovery_listener_poll(int fd, char* out_ip, int32_t* out_port) {
+    if (fd < 0 || !out_ip || !out_port) return false;
+
+    char buf[256];
+    struct sockaddr_in from;
+    socklen_t from_len = sizeof(from);
+    ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0, (struct sockaddr*)&from, &from_len);
+    if (n > 0) {
+        buf[n] = '\0';
+        if (strncmp(buf, ROR_BEACON_MAGIC, strlen(ROR_BEACON_MAGIC)) == 0) {
+            inet_ntop(AF_INET, &from.sin_addr, out_ip, 64);
+            char* colon = strrchr(buf, ':');
+            if (colon && colon > buf + strlen(ROR_BEACON_MAGIC)) {
+                int p = atoi(colon + 1);
+                *out_port = (p > 0) ? p : ROR_DEFAULT_GAME_PORT;
+            } else {
+                *out_port = ROR_DEFAULT_GAME_PORT;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+void net_discovery_listener_close(int fd) {
+    if (fd >= 0) {
+        close(fd);
+    }
+}
+
+bool net_discovery_find_host(char* out_ip, int32_t* out_port, uint32_t timeout_ms) {
+    if (!out_ip || !out_port) return false;
+
+    int fd = net_discovery_listener_open();
+    if (fd < 0) return false;
 
     struct pollfd pfd;
     pfd.fd = fd;
@@ -60,28 +101,11 @@ bool net_discovery_find_host(char* out_ip, int32_t* out_port, uint32_t timeout_m
     pfd.revents = 0;
 
     int ret = poll(&pfd, 1, (int)timeout_ms);
+    bool found = false;
     if (ret > 0 && (pfd.revents & POLLIN)) {
-        char buf[256];
-        struct sockaddr_in from;
-        socklen_t from_len = sizeof(from);
-        ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0, (struct sockaddr*)&from, &from_len);
-        if (n > 0) {
-            buf[n] = '\0';
-            if (strncmp(buf, ROR_BEACON_MAGIC, strlen(ROR_BEACON_MAGIC)) == 0) {
-                inet_ntop(AF_INET, &from.sin_addr, out_ip, 64);
-                char* colon = strrchr(buf, ':');
-                if (colon && colon > buf + strlen(ROR_BEACON_MAGIC)) {
-                    int p = atoi(colon + 1);
-                    *out_port = (p > 0) ? p : ROR_DEFAULT_GAME_PORT;
-                } else {
-                    *out_port = ROR_DEFAULT_GAME_PORT;
-                }
-                close(fd);
-                return true;
-            }
-        }
+        found = net_discovery_listener_poll(fd, out_ip, out_port);
     }
 
-    close(fd);
-    return false;
+    net_discovery_listener_close(fd);
+    return found;
 }
