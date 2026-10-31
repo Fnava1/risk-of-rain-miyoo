@@ -1036,6 +1036,8 @@ void Runner_removeInstanceLayerElement(Runner* runner, int32_t instanceId);
 uint32_t Runner_getNextLayerId(Runner* runner);
 void Runner_freeRuntimeLayer(RuntimeLayer* runtimeLayer);
 void Runner_processNetworkEvents(Runner* runner);
+int32_t gmlBufferCreate(Runner* runner, int32_t size, int32_t type, int32_t alignment);
+GmlBuffer* gmlBufferGet(Runner* runner, int32_t id);
 // Sets the active state of the instance
 static inline void Runner_setActiveState(Runner* runner, Instance* instance, bool active) {
 #ifdef ENABLE_VM_TRACING

@@ -176,6 +176,8 @@ if(ENABLE_FMOD)
 endif()
 
 file(GLOB SOURCES src/*.c)
+file(GLOB NET_SOURCES src/net/*.c)
+list(APPEND SOURCES ${NET_SOURCES})
 if(ENABLE_FMOD)
     list(APPEND SOURCES src/fmod/fmod.c src/fmod/fmod_bank.c src/fmod/fsb.c src/fmod/fmod_dsp.c)
 endif()

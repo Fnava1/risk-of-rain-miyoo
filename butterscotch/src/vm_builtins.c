@@ -10890,7 +10890,7 @@ static RValue builtin_action_set_vspeed(VMContext* ctx, MAYBE_UNUSED RValue* arg
 
 // ===[ GML BUFFER SYSTEM ]===
 
-static int32_t gmlBufferCreate(Runner* runner, int32_t size, int32_t type, int32_t alignment) {
+int32_t gmlBufferCreate(Runner* runner, int32_t size, int32_t type, int32_t alignment) {
     GmlBuffer buf = {0};
     buf.size = size > 0 ? size : 1;
     buf.data = (uint8_t *)safeCalloc((size_t) buf.size, 1);
@@ -10904,7 +10904,7 @@ static int32_t gmlBufferCreate(Runner* runner, int32_t size, int32_t type, int32
     return id;
 }
 
-static GmlBuffer* gmlBufferGet(Runner* runner, int32_t id) {
+GmlBuffer* gmlBufferGet(Runner* runner, int32_t id) {
     if (0 > id || id >= (int32_t) arrlen(runner->gmlBufferPool)) return nullptr;
     GmlBuffer* buf = &runner->gmlBufferPool[id];
     if (!buf->isValid) return nullptr;
