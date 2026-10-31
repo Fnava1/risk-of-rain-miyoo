@@ -1008,18 +1008,37 @@ static void drawInstanceNormally(Runner* runner, Instance* inst) {
         bool repositionedArtifact8 = false;
 
         if (isArtifact8 && runner->activeViewValid) {
-            ptrdiff_t slot = (runner->vmContext != nullptr) ? shgeti(runner->vmContext->varNameMap, "active") : -1;
-            bool isActive = false;
-            if (slot != -1) {
-                int32_t varId = runner->vmContext->varNameMap[slot].value;
-                RValue val = IntRValueHashMap_get(&inst->selfVars, varId);
-                if (RValue_toBool(val)) {
-                    isActive = true;
+            bool isBoxOpen = false;
+            if (runner->vmContext != nullptr) {
+                static int32_t s_fadeAlphaVarId = -2;
+                static int32_t s_ownerVarId = -2;
+                static int32_t s_activeVarId = -2;
+                if (s_fadeAlphaVarId == -2) {
+                    ptrdiff_t slot = shgeti(runner->vmContext->varNameMap, "fade_alpha");
+                    s_fadeAlphaVarId = (slot >= 0) ? runner->vmContext->varNameMap[slot].value : -1;
+                    slot = shgeti(runner->vmContext->varNameMap, "owner");
+                    s_ownerVarId = (slot >= 0) ? runner->vmContext->varNameMap[slot].value : -1;
+                    slot = shgeti(runner->vmContext->varNameMap, "active");
+                    s_activeVarId = (slot >= 0) ? runner->vmContext->varNameMap[slot].value : -1;
+                }
+
+                if (s_fadeAlphaVarId >= 0) {
+                    RValue val = IntRValueHashMap_get(&inst->selfVars, s_fadeAlphaVarId);
+                    if (RValue_toReal(val) > 0.01) isBoxOpen = true;
+                }
+                if (!isBoxOpen && s_ownerVarId >= 0) {
+                    RValue val = IntRValueHashMap_get(&inst->selfVars, s_ownerVarId);
+                    int32_t ownerId = RValue_toInt32(val);
+                    if (ownerId > 0 && ownerId != 167) isBoxOpen = true;
+                }
+                if (!isBoxOpen && s_activeVarId >= 0) {
+                    RValue val = IntRValueHashMap_get(&inst->selfVars, s_activeVarId);
+                    if (RValue_toBool(val)) isBoxOpen = true;
                 }
             }
-            if (isActive) {
-                inst->x = runner->activeViewX + runner->activeViewW * 0.5f;
-                inst->y = runner->activeViewY + 174.0f;
+            if (isBoxOpen) {
+                inst->x = runner->activeViewX + runner->activeViewW * 0.5f - 20.0f;
+                inst->y = runner->activeViewY + 200.0f;
                 repositionedArtifact8 = true;
             }
         }
