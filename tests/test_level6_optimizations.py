@@ -90,6 +90,61 @@ class TestLevel6Optimizations(unittest.TestCase):
         self.assertNotIn("while (true)", draw_body,
                          "Runner_draw must not contain mid-draw restarting while (true) loop")
 
+    def test_spatial_grid_remove_instance_o1_early_exit(self):
+        """SpatialGrid_removeInstance must return O(1) immediately when collisionCells is empty, with no fallback loop."""
+        path = os.path.join(self.butterscotch_src, "spatial_grid.c")
+        self.assertTrue(os.path.exists(path), f"Missing {path}")
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            src = f.read()
+
+        func_start = src.find("void SpatialGrid_removeInstance(")
+        self.assertNotEqual(func_start, -1, "Missing SpatialGrid_removeInstance")
+        func_end = src.find("void SpatialGrid_syncGrid(", func_start)
+        func_body = src[func_start:func_end]
+
+        self.assertIn("if (cellCount == 0)", func_body,
+                      "SpatialGrid_removeInstance must check for empty collisionCells")
+        self.assertNotIn("if (!removedAny && instance->destroyed)", func_body,
+                         "SpatialGrid_removeInstance must not contain slow brute-force scan over all cells")
+
+    def test_particle_spawn_viewport_culling(self):
+        """particleSpawnAt must cull particles spawned outside camera view + 128px margin on handhelds."""
+        path = os.path.join(self.butterscotch_src, "vm_builtins.c")
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            src = f.read()
+
+        func_start = src.find("static bool particleSpawnAt(")
+        self.assertNotEqual(func_start, -1, "Missing particleSpawnAt")
+        func_end = src.find("static void particleEmitterPoint(", func_start)
+        func_body = src[func_start:func_end]
+
+        self.assertIn("if (runner->viewsEnabled)", func_body,
+                      "particleSpawnAt must check if views are enabled")
+        self.assertIn("Runner_getCameraForView(runner, 0)", func_body,
+                      "particleSpawnAt must get view 0 camera")
+        self.assertIn("x < vx - 128.0", func_body,
+                      "particleSpawnAt must cull x < vx - 128.0")
+        self.assertIn("return true;", func_body,
+                      "particleSpawnAt must return true when culled to avoid caller early break")
+
+    def test_move_contact_unhang_stuck_instances(self):
+        """moveContactCommon must attempt vertical unsticking if instance starts embedded inside solid blocks."""
+        path = os.path.join(self.butterscotch_src, "vm_builtins.c")
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            src = f.read()
+
+        func_start = src.find("static void moveContactCommon(")
+        self.assertNotEqual(func_start, -1, "Missing moveContactCommon")
+        func_end = src.find("static RValue builtin_move_contact_solid(", func_start)
+        func_body = src[func_start:func_end]
+
+        self.assertIn("unstick it vertically upwards into free space", func_body,
+                      "moveContactCommon must document vertical unsticking")
+        self.assertIn("bounceTestFree(runner, inst, inst->x, inst->y - (GMLReal) up, useall)", func_body,
+                      "moveContactCommon must test vertical step upward")
+        self.assertIn("inst->y -= (float) up;", func_body,
+                      "moveContactCommon must apply vertical unsticking step")
+
 
 if __name__ == "__main__":
     unittest.main()

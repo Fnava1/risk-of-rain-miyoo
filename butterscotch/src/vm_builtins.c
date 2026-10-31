@@ -10729,7 +10729,17 @@ static void moveContactCommon(Runner* runner, Instance* inst, GMLReal dir, GMLRe
     GMLReal dx = GMLReal_cos(rad);
     GMLReal dy = -GMLReal_sin(rad);
     if (!bounceTestFree(runner, inst, inst->x, inst->y, useall)) {
-        return;
+        // If an instance starts already intersecting solid geometry (e.g. chests / barrels placed inside blocks in r6_1_1),
+        // unstick it vertically upwards into free space before attempting contact movement.
+        bool unhung = false;
+        for (int32_t up = 16; up <= 64; up += 16) {
+            if (bounceTestFree(runner, inst, inst->x, inst->y - (GMLReal) up, useall)) {
+                inst->y -= (float) up;
+                unhung = true;
+                break;
+            }
+        }
+        if (!unhung) return;
     }
     float origX = inst->x;
     float origY = inst->y;
@@ -20976,6 +20986,20 @@ static void particleTypeSetDefaults(ParticleType* type) {
 static bool particleSpawnAt(Runner* runner, ParticleSystem* system, int32_t typeId, GMLReal x, GMLReal y, uint32_t colour, bool fixedColour) {
     ParticleType* type = particleTypeGet(runner, typeId);
     if (type == nullptr) return false;
+
+    // Viewport culling on handheld / constrained systems: drop off-screen particles
+    if (runner->viewsEnabled) {
+        GMLCamera* camera = Runner_getCameraForView(runner, 0);
+        if (camera != nullptr && camera->viewWidth > 0 && camera->viewHeight > 0) {
+            GMLReal vx = camera->viewX;
+            GMLReal vy = camera->viewY;
+            GMLReal vw = camera->viewWidth;
+            GMLReal vh = camera->viewHeight;
+            if (x < vx - 128.0 || x > vx + vw + 128.0 || y < vy - 128.0 || y > vy + vh + 128.0) {
+                return true; // Cull off-screen particle safely
+            }
+        }
+    }
 
     if ((int32_t) arrlen(system->particles) >= PARTICLE_SYSTEM_MAX_PARTICLES) {
         if (!system->warnedFull) {

@@ -34,11 +34,17 @@ void SpatialGrid_free(SpatialGrid* grid) {
 }
 
 void SpatialGrid_removeInstance(SpatialGrid* grid, Instance* instance) {
-    int32_t totalCells = (int32_t)grid->gridWidth * (int32_t)grid->gridHeight;
-    bool removedAny = false;
+    if (grid == nullptr || instance == nullptr) return;
+    int32_t cellCount = (int32_t) arrlen(instance->collisionCells);
+    if (cellCount == 0) {
+        instance->spatialGridDirty = false;
+        return;
+    }
 
-    // First remove from any cells named in this instance's cached tracking data.
-    repeat(arrlen(instance->collisionCells), i) {
+    int32_t totalCells = (int32_t)grid->gridWidth * (int32_t)grid->gridHeight;
+
+    // Remove only from cells named in this instance's cached tracking data.
+    repeat(cellCount, i) {
         uint32_t gridCoordinates = instance->collisionCells[i];
         int32_t gridX = SpatialGrid_unpackGridX(gridCoordinates);
         int32_t gridY = SpatialGrid_unpackGridY(gridCoordinates);
@@ -51,29 +57,9 @@ void SpatialGrid_removeInstance(SpatialGrid* grid, Instance* instance) {
             if (cell[j] == instance) {
                 if (j < cellLen - 1) memmove(&cell[j], &cell[j + 1], (size_t) (cellLen - 1 - j) * sizeof(Instance*));
                 arrsetlen(cell, cellLen - 1);
-                removedAny = true;
                 cellLen--;
             } else {
                 j++;
-            }
-        }
-    }
-
-    // Only if collisionCells had no entries AND the instance is being destroyed,
-    // perform a fallback scan so an untracked destroyed instance pointer is not left dangling.
-    if (!removedAny && instance->destroyed) {
-        repeat(totalCells, cellIndex) {
-            Instance** cell = grid->grid[cellIndex];
-            int32_t cellLen = (int32_t) arrlen(cell);
-            for (int32_t j = 0; j < cellLen;) {
-                if (cell[j] == instance) {
-                    if (j < cellLen - 1) memmove(&cell[j], &cell[j + 1], (size_t) (cellLen - 1 - j) * sizeof(Instance*));
-                    arrsetlen(cell, cellLen - 1);
-                    removedAny = true;
-                    cellLen--;
-                } else {
-                    j++;
-                }
             }
         }
     }
