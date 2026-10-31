@@ -39,6 +39,7 @@
 #include "base64.h"
 #include "gettime.h"
 #include "miniz.h"
+#include "net/net_socket.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -11818,6 +11819,53 @@ STUB_RETURN_ZERO(psn_get_leaderboard_score)
 static RValue builtin_psn_setup_trophies(MAYBE_UNUSED VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     // Always tells the runner that trophies have been set up successfully
     return RValue_makeInt32(1);
+}
+
+// ===[ Networking ]===
+static RValue builtin_network_create_socket(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("network_create_socket", 1, RValue_makeReal(-1.0));
+    int32_t type = RValue_toInt32(args[0]);
+    int32_t sock = net_socket_create(type);
+    return RValue_makeReal((GMLReal)sock);
+}
+
+static RValue builtin_network_connect(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("network_connect", 3, RValue_makeReal(-1.0));
+    int32_t sock = RValue_toInt32(args[0]);
+    char* url = RValue_toString(args[1], ctx->runner->dataWin);
+    int32_t port = RValue_toInt32(args[2]);
+    int32_t res = net_connect_async(sock, url ? url : "", port);
+    if (url) free(url);
+    return RValue_makeReal((GMLReal)res);
+}
+
+static RValue builtin_network_send_packet(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("network_send_packet", 3, RValue_makeReal(-1.0));
+    int32_t sock = RValue_toInt32(args[0]);
+    int32_t bufId = RValue_toInt32(args[1]);
+    int32_t size = RValue_toInt32(args[2]);
+    GmlBuffer* buf = gmlBufferGet(ctx->runner, bufId);
+    if (!buf || !buf->data) return RValue_makeReal(-1.0);
+    if (size <= 0) size = buf->position > 0 ? buf->position : buf->size;
+    if (size > buf->size) size = buf->size;
+    int32_t sent = net_send_packet(sock, buf->data, (size_t)size);
+    return RValue_makeReal((GMLReal)sent);
+}
+
+static RValue builtin_network_create_server(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("network_create_server", 3, RValue_makeReal(-1.0));
+    int32_t type = RValue_toInt32(args[0]);
+    int32_t port = RValue_toInt32(args[1]);
+    int32_t maxClients = RValue_toInt32(args[2]);
+    int32_t sock = net_server_create(type, port, maxClients);
+    return RValue_makeReal((GMLReal)sock);
+}
+
+static RValue builtin_network_destroy(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("network_destroy", 1, RValue_makeUndefined());
+    int32_t sock = RValue_toInt32(args[0]);
+    net_socket_destroy(sock);
+    return RValue_makeUndefined();
 }
 
 // Draw functions
@@ -25475,6 +25523,13 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "buffer_set_surface", builtin_buffer_set_surface);
     VM_registerBuiltin(ctx, "sha1_file", builtin_sha1_file);
     VM_registerBuiltin(ctx, "md5_file", builtin_md5_file);
+
+    // Networking
+    VM_registerBuiltin(ctx, "network_create_socket", builtin_network_create_socket);
+    VM_registerBuiltin(ctx, "network_connect", builtin_network_connect);
+    VM_registerBuiltin(ctx, "network_send_packet", builtin_network_send_packet);
+    VM_registerBuiltin(ctx, "network_create_server", builtin_network_create_server);
+    VM_registerBuiltin(ctx, "network_destroy", builtin_network_destroy);
 
     // Filename
     VM_registerBuiltin(ctx, "filename_change_ext", builtin_filename_change_ext);
