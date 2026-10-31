@@ -24,6 +24,7 @@ int32_t net_send_packet(int32_t socketId, const uint8_t* data, size_t size);
 int32_t net_server_create(int32_t type, int32_t port, int32_t maxClients);
 void    net_socket_destroy(int32_t socketId);
 void    net_poll_sockets(NetEventCallback on_event);
+int32_t net_socket_get_server_parent(int32_t socketId);
 
 #ifdef __cplusplus
 }

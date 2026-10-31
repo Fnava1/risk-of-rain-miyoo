@@ -62,6 +62,7 @@ typedef struct {
     int32_t type;
     SocketState state;
     GMHandshakeState handshake_state;
+    int32_t parent_server_id;
     char remote_ip[64];
     int32_t remote_port;
     uint8_t* send_buf;
@@ -94,6 +95,7 @@ static void net_ensure_init(void) {
             s_sockets[i].fd = -1;
             s_sockets[i].state = SOCKET_STATE_FREE;
             s_sockets[i].handshake_state = GM_HANDSHAKE_NONE;
+            s_sockets[i].parent_server_id = -1;
             s_sockets[i].send_buf = NULL;
             s_sockets[i].recv_stream = NULL;
         }
@@ -148,6 +150,7 @@ int32_t net_socket_create(int32_t type) {
     s_sockets[slot].type = type;
     s_sockets[slot].state = (type == NET_TYPE_UDP) ? SOCKET_STATE_CONNECTED : SOCKET_STATE_CREATED;
     s_sockets[slot].handshake_state = GM_HANDSHAKE_NONE;
+    s_sockets[slot].parent_server_id = -1;
     s_sockets[slot].remote_ip[0] = '\0';
     s_sockets[slot].remote_port = 0;
     s_sockets[slot].send_buf = sbuf;
@@ -311,6 +314,7 @@ int32_t net_server_create(int32_t type, int32_t port, int32_t maxClients) {
     s_sockets[slot].type = type;
     s_sockets[slot].state = (type == NET_TYPE_TCP) ? SOCKET_STATE_LISTENING : SOCKET_STATE_CONNECTED;
     s_sockets[slot].handshake_state = GM_HANDSHAKE_NONE;
+    s_sockets[slot].parent_server_id = -1;
     s_sockets[slot].remote_ip[0] = '\0';
     s_sockets[slot].remote_port = port;
     s_sockets[slot].send_buf = NULL;
@@ -341,6 +345,7 @@ void net_socket_destroy(int32_t socketId) {
     }
     s->state = SOCKET_STATE_FREE;
     s->handshake_state = GM_HANDSHAKE_NONE;
+    s->parent_server_id = -1;
     s->send_len = 0;
     s->send_capacity = 0;
     s->recv_len = 0;
@@ -600,6 +605,7 @@ void net_poll_sockets(NetEventCallback on_event) {
                             s_sockets[cid].type = NET_TYPE_TCP;
                             s_sockets[cid].state = SOCKET_STATE_HANDSHAKING;
                             s_sockets[cid].handshake_state = GM_HANDSHAKE_SERVER_WAIT_STAGE2;
+                            s_sockets[cid].parent_server_id = id;
                             inet_ntop(AF_INET, &client_addr.sin_addr, s_sockets[cid].remote_ip, sizeof(s_sockets[cid].remote_ip));
                             s_sockets[cid].remote_port = ntohs(client_addr.sin_port);
                             s_sockets[cid].send_buf = c_sbuf;
@@ -626,3 +632,9 @@ void net_poll_sockets(NetEventCallback on_event) {
         }
     }
 }
+
+int32_t net_socket_get_server_parent(int32_t socketId) {
+    if (socketId < 0 || socketId >= MAX_NET_SOCKETS) return -1;
+    return s_sockets[socketId].parent_server_id;
+}
+

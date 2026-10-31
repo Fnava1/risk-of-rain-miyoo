@@ -133,6 +133,9 @@ def run_test_server():
                         packet_count += 1
                         if packet_count == 1:
                             print(f"    [GM:S Packet] Magic=0xdeadc0de PayloadLen={plen} PayloadHex={payload.hex()[:32]}...")
+                            print("    [✓] ¡COMUNICACIÓN EXITOSA! La consola completó el handshake y envió el paquete inicial de lobby.")
+                            print("    [*] Nota: Este script es únicamente para verificar conectividad y handshake.")
+                            print("        Para jugar, abre Risk of Rain en tu PC e inicia la sala Co-op.")
                         elif packet_count % 60 == 0:
                             print(f"    [Sync] {packet_count} paquetes GM:S procesados a 60 FPS desde la consola.")
                     else:

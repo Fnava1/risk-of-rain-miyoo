@@ -35,6 +35,8 @@ def test_async_load_includes_socket_key():
         content = f.read()
 
     assert 'safeStrdup("socket")' in content, "Missing 'socket' key in async_load map population"
+    assert "eventSock = -1" in content, "Missing eventSock = -1 on NET_EVENT_DATA for GM:S 1.4 compatibility"
+    assert "parentServer" in content, "Missing parentServer resolution for server connections"
 
 def test_async_networking_recycles_pools():
     """Verify dsMapPool and gmlBufferPool do not leak slots under network traffic."""

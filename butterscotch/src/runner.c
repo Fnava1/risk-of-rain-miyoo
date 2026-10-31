@@ -4620,9 +4620,26 @@ static void on_network_socket_event(int32_t eventType, int32_t socketId, const c
     double gmType = (eventType == NET_EVENT_CONNECT) ? 1.0 :
                     (eventType == NET_EVENT_DISCONNECT) ? 2.0 : 3.0;
 
+    int32_t parentServer = net_socket_get_server_parent(socketId);
+    int32_t eventId = socketId;
+    int32_t eventSock = -1;
+
+    if (eventType == NET_EVENT_CONNECT || eventType == NET_EVENT_DISCONNECT) {
+        if (parentServer >= 0) {
+            eventId = parentServer;
+            eventSock = socketId;
+        } else {
+            eventId = socketId;
+            eventSock = socketId;
+        }
+    } else if (eventType == NET_EVENT_DATA) {
+        eventId = socketId;
+        eventSock = -1;
+    }
+
     shput(*mapPtr, safeStrdup("type"), RValue_makeReal((GMLReal)gmType));
-    shput(*mapPtr, safeStrdup("id"), RValue_makeReal((GMLReal)socketId));
-    shput(*mapPtr, safeStrdup("socket"), RValue_makeReal((GMLReal)socketId));
+    shput(*mapPtr, safeStrdup("id"), RValue_makeReal((GMLReal)eventId));
+    shput(*mapPtr, safeStrdup("socket"), RValue_makeReal((GMLReal)eventSock));
     shput(*mapPtr, safeStrdup("ip"), RValue_makeOwnedString(safeStrdup(ip ? ip : "")));
     shput(*mapPtr, safeStrdup("port"), RValue_makeReal((GMLReal)port));
 
