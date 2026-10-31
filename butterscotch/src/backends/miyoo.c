@@ -16,6 +16,7 @@
 #include "log.h"
 #include "utils.h"
 #include "net/net_discovery.h"
+#include "font8x8.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -967,12 +968,249 @@ void platformGetMousePos(double *xPos, double *yPos) {
     if (yPos) *yPos = s_mouse_y;
 }
 
+// On-Screen Numeric Keypad (OSK) for Online Co-op IP/Port configuration
+static bool s_osk_active = false;
+static bool s_osk_just_opened = false;
+static bool s_osk_editing_port = false;
+static int  s_osk_row = 1; // 0..3 (starts on '5')
+static int  s_osk_col = 1; // 0..2
+static Instance *s_current_host_client_inst = NULL;
+
+static const char s_osk_keys[4][3] = {
+    { '1', '2', '3' },
+    { '4', '5', '6' },
+    { '7', '8', '9' },
+    { '.', '0', 'O' } // 'O' = OK / Done
+};
+
+static void mmp_set_instance_var(VMContext* ctx, Instance* inst, const char* name, RValue val) {
+    if (!ctx || !inst) return;
+    int32_t varId = VM_getOrAllocateVarID(ctx, name);
+    Instance_setSelfVar(inst, varId, val);
+}
+
+static RValue mmp_get_instance_var(VMContext* ctx, Instance* inst, const char* name) {
+    if (!ctx || !inst) return RValue_makeUndefined();
+    ptrdiff_t slot = shgeti(ctx->varNameMap, name);
+    if (slot < 0) return RValue_makeUndefined();
+    int32_t varId = ctx->varNameMap[slot].value;
+    return Instance_getSelfVar(inst, varId);
+}
+
+static void mmp_save_prefs_ip(const char* new_ip) {
+    if (!new_ip || strlen(new_ip) == 0) return;
+    FILE *f = fopen("Prefs.ini", "r");
+    char lines[128][256];
+    int line_count = 0;
+    bool found_network = false;
+    bool found_host_ip = false;
+    int net_section_line = -1;
+
+    if (f) {
+        bool in_net = false;
+        while (line_count < 120 && fgets(lines[line_count], sizeof(lines[line_count]), f)) {
+            char *l = lines[line_count];
+            if (strstr(l, "[Network]")) {
+                in_net = true;
+                found_network = true;
+                net_section_line = line_count;
+                line_count++;
+                continue;
+            }
+            if (in_net && l[0] == '[') {
+                in_net = false;
+            }
+            if (in_net && (strstr(l, "host_ip") || strstr(l, "client_ip"))) {
+                found_host_ip = true;
+                snprintf(lines[line_count], sizeof(lines[line_count]), "host_ip=\"%s\"\n", new_ip);
+            }
+            line_count++;
+        }
+        fclose(f);
+    }
+
+    FILE *out = fopen("Prefs.ini", "w");
+    if (!out) return;
+
+    if (!found_network) {
+        for (int i = 0; i < line_count; i++) {
+            fputs(lines[i], out);
+        }
+        fprintf(out, "\n[Network]\nhost_ip=\"%s\"\nport=11100\nauto_discovery=1\n", new_ip);
+    } else {
+        for (int i = 0; i < line_count; i++) {
+            fputs(lines[i], out);
+            if (i == net_section_line && !found_host_ip) {
+                fprintf(out, "host_ip=\"%s\"\n", new_ip);
+                found_host_ip = true;
+            }
+        }
+    }
+    fclose(out);
+    logInfo("Miyoo: Saved updated host_ip=\"%s\" to Prefs.ini\n", new_ip);
+}
+
+static void mmp_osk_finish_and_save(Runner *runner) {
+    s_osk_active = false;
+    if (!runner || !runner->vmContext) return;
+
+    const char *edited_str = runner->keyboard ? runner->keyboard->string : "";
+    if (edited_str && strlen(edited_str) > 0) {
+        if (s_osk_editing_port) {
+            int port = atoi(edited_str);
+            if (port > 0) {
+                if (runner->vmContext->globalScopeInstance) {
+                    mmp_set_instance_var(runner->vmContext, runner->vmContext->globalScopeInstance, "client_port", RValue_makeReal((GMLReal)port));
+                }
+                if (s_current_host_client_inst) {
+                    mmp_set_instance_var(runner->vmContext, s_current_host_client_inst, "client_port", RValue_makeReal((GMLReal)port));
+                    mmp_set_instance_var(runner->vmContext, s_current_host_client_inst, "true_choice", RValue_makeReal(0.0));
+                }
+            }
+        } else {
+            if (runner->vmContext->globalScopeInstance) {
+                mmp_set_instance_var(runner->vmContext, runner->vmContext->globalScopeInstance, "client_ip", RValue_makeString(edited_str));
+            }
+            if (s_current_host_client_inst) {
+                mmp_set_instance_var(runner->vmContext, s_current_host_client_inst, "client_ip", RValue_makeString(edited_str));
+                mmp_set_instance_var(runner->vmContext, s_current_host_client_inst, "ip", RValue_makeString(edited_str));
+                mmp_set_instance_var(runner->vmContext, s_current_host_client_inst, "ip_address", RValue_makeString(edited_str));
+                mmp_set_instance_var(runner->vmContext, s_current_host_client_inst, "true_choice", RValue_makeReal(0.0));
+            }
+            mmp_save_prefs_ip(edited_str);
+        }
+    } else {
+        if (s_current_host_client_inst) {
+            mmp_set_instance_var(runner->vmContext, s_current_host_client_inst, "true_choice", RValue_makeReal(0.0));
+        }
+    }
+}
+
+static void draw_rect_fill(uint16_t *fb, int tw, int th, int x, int y, int w, int h, uint16_t color) {
+    if (!fb) return;
+    int x1 = (x < 0) ? 0 : x;
+    int y1 = (y < 0) ? 0 : y;
+    int x2 = (x + w > tw) ? tw : (x + w);
+    int y2 = (y + h > th) ? th : (y + h);
+    for (int cy = y1; cy < y2; cy++) {
+        uint16_t *row = fb + cy * tw;
+        for (int cx = x1; cx < x2; cx++) {
+            row[cx] = color;
+        }
+    }
+}
+
+static void draw_rect_outline(uint16_t *fb, int tw, int th, int x, int y, int w, int h, uint16_t color) {
+    if (!fb) return;
+    int x2 = x + w - 1;
+    int y2 = y + h - 1;
+    for (int cx = x; cx <= x2; cx++) {
+        if (cx >= 0 && cx < tw) {
+            if (y >= 0 && y < th) fb[y * tw + cx] = color;
+            if (y2 >= 0 && y2 < th) fb[y2 * tw + cx] = color;
+        }
+    }
+    for (int cy = y; cy <= y2; cy++) {
+        if (cy >= 0 && cy < th) {
+            if (x >= 0 && x < tw) fb[cy * tw + x] = color;
+            if (x2 >= 0 && x2 < tw) fb[cy * tw + x2] = color;
+        }
+    }
+}
+
+static void draw_rect_translucent(uint16_t *fb, int tw, int th, int x, int y, int w, int h, uint16_t blend_color) {
+    if (!fb) return;
+    int x1 = (x < 0) ? 0 : x;
+    int y1 = (y < 0) ? 0 : y;
+    int x2 = (x + w > tw) ? tw : (x + w);
+    int y2 = (y + h > th) ? th : (y + h);
+    uint16_t bc = (blend_color >> 1) & 0x7BEF;
+    for (int cy = y1; cy < y2; cy++) {
+        uint16_t *row = fb + cy * tw;
+        for (int cx = x1; cx < x2; cx++) {
+            uint16_t orig = row[cx];
+            row[cx] = ((orig >> 1) & 0x7BEF) + bc;
+        }
+    }
+}
+
+static void mmp_osk_draw(uint16_t *fb, int tw, int th) {
+    if (!fb || !s_osk_active) return;
+
+    int pw = 260;
+    int ph = 156;
+    int px = (tw - pw) / 2;
+    int py = 295;
+
+    // 1. Panel background & borders
+    draw_rect_translucent(fb, tw, th, px, py, pw, ph, 0x10A2); // semi-translucent dark navy
+    draw_rect_outline(fb, tw, th, px, py, pw, ph, 0x07FF);     // cyan outer border
+    draw_rect_outline(fb, tw, th, px + 1, py + 1, pw - 2, ph - 2, 0x0270);
+
+    // 2. Current value preview
+    char preview[64];
+    const char *cur_str = (g_runner && g_runner->keyboard) ? g_runner->keyboard->string : "";
+    snprintf(preview, sizeof(preview), "%s: %s_", s_osk_editing_port ? "PORT" : "IP", cur_str);
+    int prev_len = (int)strlen(preview);
+    int prev_x = px + (pw - prev_len * 8) / 2;
+    if (prev_x < px + 4) prev_x = px + 4;
+    font8x8_draw_string(fb, tw, th, prev_x, py + 8, preview, 0xFFE0, 1); // gold / bright yellow
+
+    // 3. Grid keys
+    int bw = 70;
+    int bh = 22;
+    int gap_x = 8;
+    int gap_y = 4;
+    int gx = px + (pw - (3 * bw + 2 * gap_x)) / 2;
+    int gy = py + 22;
+
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 3; c++) {
+            int kx = gx + c * (bw + gap_x);
+            int ky = gy + r * (bh + gap_y);
+            bool is_sel = (r == s_osk_row && c == s_osk_col);
+
+            char key = s_osk_keys[r][c];
+            if (is_sel) {
+                draw_rect_fill(fb, tw, th, kx, ky, bw, bh, 0x07FF); // cyan fill
+                draw_rect_outline(fb, tw, th, kx, ky, bw, bh, 0xFFFF);
+            } else {
+                draw_rect_fill(fb, tw, th, kx, ky, bw, bh, 0x2124); // dark slate fill
+                draw_rect_outline(fb, tw, th, kx, ky, bw, bh, 0x4A69);
+            }
+
+            uint16_t text_color = is_sel ? 0x0000 : 0xFFFF;
+            if (key == 'O') {
+                int tx = kx + (bw - 32) / 2;
+                int ty = ky + (bh - 16) / 2;
+                font8x8_draw_string(fb, tw, th, tx, ty, "OK", text_color, 2);
+            } else {
+                int tx = kx + (bw - 16) / 2;
+                int ty = ky + (bh - 16) / 2;
+                font8x8_draw_char(fb, tw, th, tx, ty, key, text_color, 2);
+            }
+        }
+    }
+
+    // 4. Instructions footer
+    const char *footer = "A:Poner  Y:Borrar  B:Listo";
+    int f_len = (int)strlen(footer);
+    int fx = px + (pw - f_len * 8) / 2;
+    font8x8_draw_string(fb, tw, th, fx, py + 138, footer, 0xCE79, 1); // soft light silver
+}
+
+
 void platformSwapBuffers(void) {
     if (!g_runner || !g_runner->renderer) return;
     uint16_t *fb = SWRenderer_getFramebuffer(g_runner->renderer);
     if (!fb) return;
 
     int tw = SWRenderer_getTargetWidth(g_runner->renderer);
+    int th = SWRenderer_getTargetHeight(g_runner->renderer);
+
+    if (s_osk_active) {
+        mmp_osk_draw(fb, tw, th);
+    }
 
     pthread_mutex_lock(&s_flip_mutex);
     while (s_worker_work_pending) {
@@ -1005,11 +1243,8 @@ void *platformGetProcAddress(const char *name) {
     } \
 } while(0)
 
-static void mmp_set_instance_var(VMContext* ctx, Instance* inst, const char* name, RValue val) {
-    if (!ctx || !inst) return;
-    int32_t varId = VM_getOrAllocateVarID(ctx, name);
-    Instance_setSelfVar(inst, varId, val);
-}
+
+
 
 static void mmp_check_network_autoconnect(Runner *runner) {
     if (!runner || !runner->instancesByObject || !runner->dataWin) return;
@@ -1033,6 +1268,30 @@ static void mmp_check_network_autoconnect(Runner *runner) {
         Instance **list = runner->instancesByObject[s_oHostClient_idx];
         if (list != NULL && arrlen(list) > 0) {
             Instance *hostClientInst = list[0];
+            s_current_host_client_inst = hostClientInst;
+
+            // Check if user clicked on IP (true_choice == 5) or Port (true_choice == 6)
+            int true_choice = 0;
+            if (runner->vmContext) {
+                RValue tcVal = mmp_get_instance_var(runner->vmContext, hostClientInst, "true_choice");
+                true_choice = RValue_toInt32(tcVal);
+            }
+
+            if ((true_choice == 5 || true_choice == 6) && !s_osk_active) {
+                s_osk_active = true;
+                s_osk_just_opened = true;
+                s_osk_editing_port = (true_choice == 6);
+                s_osk_row = 1;
+                s_osk_col = 1; // start on '5'
+                // Ensure mouse click is released cleanly
+                if (runner->mouse) {
+                    RunnerMouse_onButtonUp(runner->mouse, GML_MB_LEFT);
+                    RunnerMouse_onButtonUp(runner->mouse, GML_MB_RIGHT);
+                }
+            } else if (true_choice != 5 && true_choice != 6 && s_osk_active) {
+                s_osk_active = false;
+            }
+
             if (!s_initial_init_done) {
                 s_initial_init_done = true;
                 char host_ip[64] = "192.168.4.1";
@@ -1109,6 +1368,8 @@ static void mmp_check_network_autoconnect(Runner *runner) {
             }
             s_host_discovered = false;
             s_initial_init_done = false;
+            s_current_host_client_inst = NULL;
+            s_osk_active = false;
         }
     }
 }
@@ -1196,6 +1457,72 @@ bool platformHandleEvents(void) {
     if (exit_requested) {
         logInfo("Miyoo: Exit requested by user (MENU or START+SELECT).\n");
         return true;
+    }
+
+    mmp_check_network_autoconnect(g_runner);
+
+    if (s_osk_active) {
+        if (s_osk_just_opened) {
+            if (!s_curr_state.a) {
+                s_osk_just_opened = false;
+            }
+        }
+
+        // OSK D-pad navigation
+        if (s_curr_state.up && !s_prev_state.up) {
+            s_osk_row = (s_osk_row + 3) % 4;
+        }
+        if (s_curr_state.down && !s_prev_state.down) {
+            s_osk_row = (s_osk_row + 1) % 4;
+        }
+        if (s_curr_state.left && !s_prev_state.left) {
+            s_osk_col = (s_osk_col + 2) % 3;
+        }
+        if (s_curr_state.right && !s_prev_state.right) {
+            s_osk_col = (s_osk_col + 1) % 3;
+        }
+
+        // Button A: Input character (or OK)
+        if (s_curr_state.a && !s_prev_state.a && !s_osk_just_opened) {
+            char k = s_osk_keys[s_osk_row][s_osk_col];
+            if (k == 'O') {
+                mmp_osk_finish_and_save(g_runner);
+            } else if (g_runner && g_runner->keyboard) {
+                RunnerKeyboard_onCharacter(g_runner->keyboard, (unsigned int)k);
+            }
+        }
+
+        // Button Y: Backspace
+        if (s_curr_state.y && !s_prev_state.y) {
+            if (g_runner && g_runner->keyboard) {
+                RunnerKeyboard_onCharacter(g_runner->keyboard, 8);
+            }
+        }
+
+        // Button X: Clear all
+        if (s_curr_state.x && !s_prev_state.x) {
+            if (g_runner && g_runner->keyboard) {
+                g_runner->keyboard->string[0] = '\0';
+                g_runner->keyboard->stringLen = 0;
+            }
+        }
+
+        // Button B or START: Finish and Save
+        if ((s_curr_state.b && !s_prev_state.b) || (s_curr_state.start && !s_prev_state.start)) {
+            mmp_osk_finish_and_save(g_runner);
+        }
+
+        // Suppress gamepad inputs to the game while editing
+        if (g_runner && g_runner->gamepads) {
+            GamepadSlot *slot = &g_runner->gamepads->slots[0];
+            slot->connected = true;
+            memset(slot->buttonDown, 0, sizeof(slot->buttonDown));
+            memset(slot->buttonPressed, 0, sizeof(slot->buttonPressed));
+            memset(slot->buttonReleased, 0, sizeof(slot->buttonReleased));
+        }
+
+        s_prev_state = s_curr_state;
+        return false;
     }
 
     if (g_runner && g_runner->gamepads && g_runner->keyboard) {
@@ -1339,7 +1666,6 @@ bool platformHandleEvents(void) {
         s_prev_state = s_curr_state;
     }
 
-    mmp_check_network_autoconnect(g_runner);
     return false;
 }
 
