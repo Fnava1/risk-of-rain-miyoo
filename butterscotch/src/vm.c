@@ -2862,6 +2862,133 @@ static void unwindVMStack(VMContext* ctx, int32_t newStackTop) {
     ctx->stack.top = newStackTop;
 }
 
+#ifndef VM_LIKELY
+#if defined(__GNUC__) || defined(__clang__)
+#define VM_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define VM_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define VM_LIKELY(x)   (x)
+#define VM_UNLIKELY(x) (x)
+#endif
+#endif
+
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(DISABLE_COMPUTED_GOTO)
+#define VM_USE_COMPUTED_GOTO 1
+#else
+#define VM_USE_COMPUTED_GOTO 0
+#endif
+
+#if VM_USE_COMPUTED_GOTO
+#define TARGET(op) do_##op
+#define DISPATCH() VM_DISPATCH_STEP()
+#else
+#define TARGET(op) case op
+#define DISPATCH() break
+#endif
+
+#if defined(ENABLE_VM_GML_PROFILER) || defined(ENABLE_VM_OPCODE_PROFILER) || defined(ENABLE_VM_TRACING)
+static void NOINLINE vm_dispatch_debug_slow(VMContext* ctx, uint32_t instrAddr, uint32_t instr, const uint8_t* extraData, uint8_t opcode, RValue* slots) {
+#ifdef ENABLE_VM_GML_PROFILER
+    if (ctx->profiler != nullptr)
+        Profiler_tickInstruction(ctx->profiler);
+#endif
+#ifdef ENABLE_VM_OPCODE_PROFILER
+    if (ctx->opcodeProfilerEnabled) {
+        ctx->opcodeCounts[opcode]++;
+        ctx->opcodeVariantCounts[opcode * 256 + instrType1(instr) * 16 + instrType2(instr)]++;
+        if (opcode == OP_BREAK) {
+            int16_t breakType = instrInstanceType(instr);
+            int idx = -breakType;
+            if (idx >= 0 && 64 > idx) {
+                ctx->breakSubOpCounts[idx]++;
+            }
+        }
+        uint8_t rvTypeA = 0xFF, rvTypeB = 0xF;
+        switch (opcode) {
+            case OP_MUL: case OP_DIV: case OP_REM: case OP_MOD:
+            case OP_ADD: case OP_SUB: case OP_AND: case OP_OR:
+            case OP_XOR: case OP_SHL: case OP_SHR: case OP_CMP:
+                if (ctx->stack.top >= 2) {
+                    rvTypeA = slots[ctx->stack.top - 2].type;
+                    rvTypeB = slots[ctx->stack.top - 1].type;
+                }
+                break;
+            case OP_NEG: case OP_NOT: case OP_CONV:
+                if (ctx->stack.top >= 1) {
+                    rvTypeA = slots[ctx->stack.top - 1].type;
+                }
+                break;
+        }
+        if (rvTypeA != 0xFF) {
+            ctx->opcodeRValueTypeCounts[opcode * 256 + (rvTypeA & 0xF) * 16 + (rvTypeB & 0xF)]++;
+        }
+    }
+#endif
+#ifdef ENABLE_VM_TRACING
+    if (shlen(ctx->opcodesToBeTraced) > 0 && ctx->runner->frameCount >= ctx->traceBytecodeAfterFrame) {
+        if (shgeti(ctx->opcodesToBeTraced, "*") != -1 || shgeti(ctx->opcodesToBeTraced, ctx->currentCodeName) != -1) {
+            char opcodeStr[32], operandStr[256] = "", commentStr[128] = "";
+            formatInstruction(ctx, ctx->bytecodeBase, instrAddr, instr, extraData, opcodeStr, sizeof(opcodeStr), operandStr, sizeof(operandStr), commentStr, sizeof(commentStr));
+
+            char* stackBuf = formatStackContents(ctx);
+
+            if (operandStr[0] != '\0') {
+                logInfo("VM: [%s] @%04X (%d) [0x%08X] %s %s [stack=%d] %s\n", ctx->currentCodeName, instrAddr, instrAddr, instr, opcodeStr, operandStr, ctx->stack.top, stackBuf);
+            } else {
+                logInfo("VM: [%s] @%04X (%d) [0x%08X] %s [stack=%d] %s\n", ctx->currentCodeName, instrAddr, instrAddr, instr, opcodeStr, ctx->stack.top, stackBuf);
+            }
+            free(stackBuf);
+        }
+    }
+#endif
+}
+
+static inline void vm_check_debug(VMContext* ctx, uint32_t instrAddr, uint32_t instr, const uint8_t* extraData, uint8_t opcode, RValue* slots) {
+    if (VM_UNLIKELY(
+#ifdef ENABLE_VM_GML_PROFILER
+        (ctx->profiler != nullptr) ||
+#endif
+#ifdef ENABLE_VM_OPCODE_PROFILER
+        ctx->opcodeProfilerEnabled ||
+#endif
+#ifdef ENABLE_VM_TRACING
+        (shlen(ctx->opcodesToBeTraced) > 0 && ctx->runner->frameCount >= ctx->traceBytecodeAfterFrame) ||
+#endif
+        0)) {
+        vm_dispatch_debug_slow(ctx, instrAddr, instr, extraData, opcode, slots);
+    }
+}
+#else
+static inline void vm_check_debug(VMContext* ctx, uint32_t instrAddr, uint32_t instr, const uint8_t* extraData, uint8_t opcode, RValue* slots) {
+    (void)ctx; (void)instrAddr; (void)instr; (void)extraData; (void)opcode; (void)slots;
+}
+#endif
+
+#if VM_USE_COMPUTED_GOTO
+#ifdef ENABLE_WAD17
+#define VM_CHECK_EXCEPTION() do { \
+    if (VM_UNLIKELY(ctx->exception != nullptr)) goto handle_exception; \
+} while (0)
+#else
+#define VM_CHECK_EXCEPTION() do {} while (0)
+#endif
+
+#define VM_DISPATCH_STEP() do { \
+    VM_CHECK_EXCEPTION(); \
+    if (VM_UNLIKELY(ip >= codeEnd)) goto loop_end; \
+    instrAddr = ip; \
+    instr = BinaryUtils_readUint32Aligned(bytecodeBase + ip); \
+    ip += 4; \
+    extraData = bytecodeBase + ip; \
+    if (instrHasExtraData(instr)) { \
+        ip += extraDataSize(instrType1(instr)); \
+    } \
+    opcode = instrOpcode(instr); \
+    vm_check_debug(ctx, instrAddr, instr, extraData, opcode, slots); \
+    goto *dispatch_table[opcode]; \
+} while (0)
+#endif
+
 static RValue executeLoop(VMContext* ctx) {
     // codeEnd and bytecodeBase are invariant for the lifetime of this executeLoop call, so let's hoist them to avoid the compiler emitting code to
     // reload the values at the end of every iteration.
@@ -2872,11 +2999,62 @@ static RValue executeLoop(VMContext* ctx) {
     uint32_t ip = ctx->ip;
 
     RValue* restrict slots = ctx->stack.slots;
+    uint32_t instrAddr = 0;
+    uint32_t instr = 0;
+    const uint8_t* extraData = nullptr;
+    uint8_t opcode = 0;
 
-    // Some opcodes have their handler or parts of their handler inlined
-    // Those are opcodes that during real gameplay (using "--profile-opcodes") shown that, with inlining and keeping only the frequently called handle parts, we could squeeze MORE performance from the interpreter!
+#if VM_USE_COMPUTED_GOTO
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverride-init"
+#endif
+    static const void* const dispatch_table[256] = {
+        [0 ... 255]   = &&do_unknown,
+        [OP_CONV]     = &&do_OP_CONV,
+        [OP_MUL]      = &&do_OP_MUL,
+        [OP_DIV]      = &&do_OP_DIV,
+        [OP_REM]      = &&do_OP_REM,
+        [OP_MOD]      = &&do_OP_MOD,
+        [OP_ADD]      = &&do_OP_ADD,
+        [OP_SUB]      = &&do_OP_SUB,
+        [OP_AND]      = &&do_OP_AND,
+        [OP_OR]       = &&do_OP_OR,
+        [OP_XOR]      = &&do_OP_XOR,
+        [OP_NEG]      = &&do_OP_NEG,
+        [OP_NOT]      = &&do_OP_NOT,
+        [OP_SHL]      = &&do_OP_SHL,
+        [OP_SHR]      = &&do_OP_SHR,
+        [OP_CMP]      = &&do_OP_CMP,
+        [OP_POP]      = &&do_OP_POP,
+        [OP_PUSHI]    = &&do_OP_PUSHI,
+        [OP_DUP]      = &&do_OP_DUP,
+        [OP_CALLV]    = &&do_OP_CALLV,
+        [OP_RET]      = &&do_OP_RET,
+        [OP_EXIT]     = &&do_OP_EXIT,
+        [OP_POPZ]     = &&do_OP_POPZ,
+        [OP_B]        = &&do_OP_B,
+        [OP_BT]       = &&do_OP_BT,
+        [OP_BF]       = &&do_OP_BF,
+        [OP_PUSHENV]  = &&do_OP_PUSHENV,
+        [OP_POPENV]   = &&do_OP_POPENV,
+        [OP_PUSH]     = &&do_OP_PUSH,
+        [OP_PUSHLOC]  = &&do_OP_PUSHLOC,
+        [OP_PUSHGLB]  = &&do_OP_PUSHGLB,
+        [OP_PUSHBLTN] = &&do_OP_PUSHBLTN,
+        [OP_CALL]     = &&do_OP_CALL,
+        [OP_BREAK]    = &&do_OP_BREAK,
+    };
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
+    DISPATCH();
+#else
     while (codeEnd > ip) {
+#endif
 #ifdef ENABLE_WAD17
+handle_exception:
         if (ctx->exception != nullptr) {
 #ifdef ENABLE_VM_EXCEPTIONS_LOGS
             logError("VM: Exception thrown! Stack Top is %d\n", ctx->exceptionHandlerStackTop);
@@ -2926,83 +3104,32 @@ static RValue executeLoop(VMContext* ctx) {
             }
 
             ctx->exception = nullptr;
+#if VM_USE_COMPUTED_GOTO
+            DISPATCH();
+#endif
         }
 #endif
 
-#ifdef ENABLE_VM_GML_PROFILER
-        if (ctx->profiler != nullptr)
-            Profiler_tickInstruction(ctx->profiler);
-#endif
-        uint32_t instrAddr = ip;
-        uint32_t instr = BinaryUtils_readUint32Aligned(bytecodeBase + ip);
+#if !VM_USE_COMPUTED_GOTO
+        instrAddr = ip;
+        instr = BinaryUtils_readUint32Aligned(bytecodeBase + ip);
         ip += 4;
 
         // extraData pointer (may not be used depending on opcode)
-        const uint8_t* extraData = bytecodeBase + ip;
+        extraData = bytecodeBase + ip;
 
         // If instruction has extra data (bit 30 set), advance IP past it
         if (instrHasExtraData(instr)) {
             ip += extraDataSize(instrType1(instr));
         }
 
-        uint8_t opcode = instrOpcode(instr);
-
-#ifdef ENABLE_VM_OPCODE_PROFILER
-        if (ctx->opcodeProfilerEnabled) {
-            ctx->opcodeCounts[opcode]++;
-            ctx->opcodeVariantCounts[opcode * 256 + instrType1(instr) * 16 + instrType2(instr)]++;
-            if (opcode == OP_BREAK) {
-                int16_t breakType = instrInstanceType(instr);
-                int idx = -breakType;
-                if (idx >= 0 && 64 > idx) {
-                    ctx->breakSubOpCounts[idx]++;
-                }
-            }
-            // Capture actual runtime RValue types for arithmetic/comparison/conversion ops.
-            // typeB = 0xF sentinel for unary ops (no second operand).
-            uint8_t rvTypeA = 0xFF, rvTypeB = 0xF;
-            switch (opcode) {
-                case OP_MUL: case OP_DIV: case OP_REM: case OP_MOD:
-                case OP_ADD: case OP_SUB: case OP_AND: case OP_OR:
-                case OP_XOR: case OP_SHL: case OP_SHR: case OP_CMP:
-                    if (ctx->stack.top >= 2) {
-                        rvTypeA = slots[ctx->stack.top - 2].type;
-                        rvTypeB = slots[ctx->stack.top - 1].type;
-                    }
-                    break;
-                case OP_NEG: case OP_NOT: case OP_CONV:
-                    if (ctx->stack.top >= 1) {
-                        rvTypeA = slots[ctx->stack.top - 1].type;
-                    }
-                    break;
-            }
-            if (rvTypeA != 0xFF) {
-                ctx->opcodeRValueTypeCounts[opcode * 256 + (rvTypeA & 0xF) * 16 + (rvTypeB & 0xF)]++;
-            }
-        }
-#endif
-
-#ifdef ENABLE_VM_TRACING
-        if (shlen(ctx->opcodesToBeTraced) > 0 && ctx->runner->frameCount >= ctx->traceBytecodeAfterFrame) {
-            if (shgeti(ctx->opcodesToBeTraced, "*") != -1 || shgeti(ctx->opcodesToBeTraced, ctx->currentCodeName) != -1) {
-                char opcodeStr[32], operandStr[256] = "", commentStr[128] = "";
-                formatInstruction(ctx, ctx->bytecodeBase, instrAddr, instr, extraData, opcodeStr, sizeof(opcodeStr), operandStr, sizeof(operandStr), commentStr, sizeof(commentStr));
-
-                char* stackBuf = formatStackContents(ctx);
-
-                if (operandStr[0] != '\0') {
-                    logInfo("VM: [%s] @%04X (%d) [0x%08X] %s %s [stack=%d] %s\n", ctx->currentCodeName, instrAddr, instrAddr, instr, opcodeStr, operandStr, ctx->stack.top, stackBuf);
-                } else {
-                    logInfo("VM: [%s] @%04X (%d) [0x%08X] %s [stack=%d] %s\n", ctx->currentCodeName, instrAddr, instrAddr, instr, opcodeStr, ctx->stack.top, stackBuf);
-                }
-                free(stackBuf);
-            }
-        }
-#endif
+        opcode = instrOpcode(instr);
+        vm_check_debug(ctx, instrAddr, instr, extraData, opcode, slots);
 
         switch (opcode) {
+#endif
             // Push instructions
-            case OP_PUSH: {
+            TARGET(OP_PUSH): {
                 uint8_t type1 = instrType1(instr);
                 // Inline fast paths for variable reads (not ints, doubles, etc, only VARIABLES) that are "normal" type (not arrays, not stacktop, and not the new fangled BC17 array reads)
                 if (type1 == GML_TYPE_VARIABLE) {
@@ -3035,15 +3162,15 @@ static RValue executeLoop(VMContext* ctx) {
                                     }
                                 }
 #endif
-                                break;
+                                DISPATCH();
                             }
                         }
                     }
                 }
                 handlePush(ctx, instr, extraData, type1);
-                break;
+                DISPATCH();
             }
-            case OP_PUSHLOC: {
+            TARGET(OP_PUSHLOC): {
                 uint32_t varRef = resolveVarOperand(extraData);
 #if IS_WAD17_OR_HIGHER_ENABLED
                 uint8_t varType = (uint8_t) ((varRef >> 24) & 0xF8);
@@ -3052,7 +3179,7 @@ static RValue executeLoop(VMContext* ctx) {
                     uint32_t localSlot = resolveLocalSlot(ctx, varDef->varID);
                     require(ctx->localVarCount > localSlot);
                     pushTopLevelArrayRef(ctx, &ctx->localVars[localSlot], varType == VARTYPE_ARRAYPOPAF);
-                    break;
+                    DISPATCH();
                 }
 #endif
                 // Locals are always non-builtin (varID >= 0); inline the read straight from localVars[].
@@ -3065,9 +3192,9 @@ static RValue executeLoop(VMContext* ctx) {
 #ifdef ENABLE_VM_TRACING
                 VM_checkIfVariableShouldBeTracedAndLog(ctx, "local", nullptr, varDef->name, val, false, -1, -1, "");
 #endif
-                break;
+                DISPATCH();
             }
-            case OP_PUSHGLB: {
+            TARGET(OP_PUSHGLB): {
                 uint32_t varRef = resolveVarOperand(extraData);
                 uint8_t varType = (uint8_t) ((varRef >> 24) & 0xF8);
                 if (varType == VARTYPE_NORMAL) {
@@ -3083,24 +3210,24 @@ static RValue executeLoop(VMContext* ctx) {
 #ifdef ENABLE_VM_TRACING
                                 VM_checkIfVariableShouldBeTracedAndLog(ctx, "global", nullptr, varDef->name, val, false, -1, -1, "");
 #endif
-                                break;
+                                DISPATCH();
                             }
                         }
                     }
                 }
                 RValue val = resolveVariableRead(ctx, INSTANCE_GLOBAL, varRef);
                 stackPushTyped(ctx, val, GML_TYPE_VARIABLE);
-                break;
+                DISPATCH();
             }
-            case OP_PUSHBLTN:
+            TARGET(OP_PUSHBLTN):
                 handlePushBltn(ctx, instr, extraData);
-                break;
-            case OP_PUSHI:
+                DISPATCH();
+            TARGET(OP_PUSHI):
                 handlePushI(ctx, instr);
-                break;
+                DISPATCH();
 
             // Pop instructions
-            case OP_POP: {
+            TARGET(OP_POP): {
                 uint8_t type1 = instrType1(instr);
                 uint32_t varRef = resolveVarOperand(extraData);
                 uint8_t varType = (uint8_t) ((varRef >> 24) & 0xF8);
@@ -3116,15 +3243,15 @@ static RValue executeLoop(VMContext* ctx) {
                 } else {
                     handlePop(ctx, type1, type2, varRef, varType, instanceType);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_POPZ:
+            TARGET(OP_POPZ):
                 handlePopz(ctx);
-                break;
+                DISPATCH();
 
             // Arithmetic
             // We keep the number + number operations inlined in executeLoop, keeping only the slow path for string concat/repetition
-            case OP_ADD: {
+            TARGET(OP_ADD): {
                 RValue* slotA = &slots[ctx->stack.top - 2];
                 RValue* slotB = &slots[ctx->stack.top - 1];
                 uint8_t aType = slotA->type;
@@ -3148,12 +3275,12 @@ static RValue executeLoop(VMContext* ctx) {
                     RValue a = stackPop(ctx);
                     if (a.type == RVALUE_STRING || b.type == RVALUE_STRING) {
                         handleAddString(ctx, a, b, resultType);
-                        break;
+                        DISPATCH();
                     }
 #ifndef NO_RVALUE_INT64
                     if (a.type == RVALUE_INT64 && b.type == RVALUE_INT64) {
                         stackPushTyped(ctx, RValue_makeInt64(a.int64 + b.int64), resultType);
-                        break;
+                        DISPATCH();
                     }
 #endif
                     GMLReal result = RValue_toReal(a) + RValue_toReal(b);
@@ -3161,9 +3288,9 @@ static RValue executeLoop(VMContext* ctx) {
                     RValue_free(&b);
                     stackPushTyped(ctx, RValue_makeReal(result), resultType);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_SUB: {
+            TARGET(OP_SUB): {
                 RValue* slotA = &slots[ctx->stack.top - 2];
                 RValue* slotB = &slots[ctx->stack.top - 1];
                 uint8_t aType = slotA->type;
@@ -3186,7 +3313,7 @@ static RValue executeLoop(VMContext* ctx) {
 #ifndef NO_RVALUE_INT64
                     if (a.type == RVALUE_INT64 && b.type == RVALUE_INT64) {
                         stackPushTyped(ctx, RValue_makeInt64(a.int64 - b.int64), resultType);
-                        break;
+                        DISPATCH();
                     }
 #endif
                     GMLReal result = RValue_toReal(a) - RValue_toReal(b);
@@ -3194,9 +3321,9 @@ static RValue executeLoop(VMContext* ctx) {
                     RValue_free(&b);
                     stackPushTyped(ctx, RValue_makeReal(result), resultType);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_MUL: {
+            TARGET(OP_MUL): {
                 RValue* slotA = &slots[ctx->stack.top - 2];
                 RValue* slotB = &slots[ctx->stack.top - 1];
                 uint8_t aType = slotA->type;
@@ -3218,12 +3345,12 @@ static RValue executeLoop(VMContext* ctx) {
                     RValue a = stackPop(ctx);
                     if (a.type == RVALUE_STRING) {
                         handleMulString(ctx, a, b, resultType);
-                        break;
+                        DISPATCH();
                     }
 #ifndef NO_RVALUE_INT64
                     if (a.type == RVALUE_INT64 && b.type == RVALUE_INT64) {
                         stackPushTyped(ctx, RValue_makeInt64(a.int64 * b.int64), resultType);
-                        break;
+                        DISPATCH();
                     }
 #endif
                     GMLReal result = RValue_toReal(a) * RValue_toReal(b);
@@ -3231,25 +3358,25 @@ static RValue executeLoop(VMContext* ctx) {
                     RValue_free(&b);
                     stackPushTyped(ctx, RValue_makeReal(result), resultType);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_DIV: handleDiv(ctx, instr); break;
-            case OP_REM: handleRem(ctx, instr); break;
-            case OP_MOD: handleMod(ctx, instr); break;
+            TARGET(OP_DIV): handleDiv(ctx, instr); DISPATCH();
+            TARGET(OP_REM): handleRem(ctx, instr); DISPATCH();
+            TARGET(OP_MOD): handleMod(ctx, instr); DISPATCH();
 
             // Bitwise / Logical
-            case OP_AND: handleAnd(ctx, instr); break;
-            case OP_OR:  handleOr(ctx, instr);  break;
-            case OP_XOR: handleXor(ctx, instr); break;
-            case OP_SHL: handleShl(ctx, instr); break;
-            case OP_SHR: handleShr(ctx, instr); break;
+            TARGET(OP_AND): handleAnd(ctx, instr); DISPATCH();
+            TARGET(OP_OR):  handleOr(ctx, instr);  DISPATCH();
+            TARGET(OP_XOR): handleXor(ctx, instr); DISPATCH();
+            TARGET(OP_SHL): handleShl(ctx, instr); DISPATCH();
+            TARGET(OP_SHR): handleShr(ctx, instr); DISPATCH();
 
             // Unary
-            case OP_NEG: handleNeg(ctx, instr); break;
-            case OP_NOT: handleNot(ctx, instr); break;
+            TARGET(OP_NEG): handleNeg(ctx, instr); DISPATCH();
+            TARGET(OP_NOT): handleNot(ctx, instr); DISPATCH();
 
             // Type conversion
-            case OP_CONV: {
+            TARGET(OP_CONV): {
                 uint8_t srcType = instrType1(instr);
                 uint8_t dstType = instrType2(instr);
                 uint8_t convKey = (uint8_t) ((dstType << 4) | srcType);
@@ -3307,11 +3434,11 @@ static RValue executeLoop(VMContext* ctx) {
                 } else {
                     handleConv(ctx, srcType, dstType, convKey);
                 }
-                break;
+                DISPATCH();
             }
 
             // Comparison
-            case OP_CMP: {
+            TARGET(OP_CMP): {
                 RValue* slotA = &slots[ctx->stack.top - 2];
                 RValue* slotB = &slots[ctx->stack.top - 1];
                 uint8_t aType = slotA->type;
@@ -3341,88 +3468,106 @@ static RValue executeLoop(VMContext* ctx) {
                 } else {
                     handleCmp(ctx, instr);
                 }
-                break;
+                DISPATCH();
             }
 
             // Duplicate
-            case OP_DUP:
+            TARGET(OP_DUP):
                 handleDup(ctx, instr);
-                break;
+                DISPATCH();
 
             // Branches
             // The reason why these (the branches opcodes) are inlined is because they access ctx->ip
             // So, because they are short n' sweet, we prefer to keep them inlined to avoid any reloading shenanigans that the compiler may do
-            case OP_B: {
+            TARGET(OP_B): {
                 int32_t offset = instrJumpOffset(instr);
                 ip = instrAddr + offset;
-                break;
+                DISPATCH();
             }
-            case OP_BT: {
+            TARGET(OP_BT): {
                 bool condition = stackPopInt32(ctx) != 0;
                 if (condition == true) {
                     int32_t offset = instrJumpOffset(instr);
                     ip = instrAddr + offset;
                 }
-                break;
+                DISPATCH();
             }
-            case OP_BF: {
+            TARGET(OP_BF): {
                 bool condition = stackPopInt32(ctx) != 0;
                 if (condition == false) {
                     int32_t offset = instrJumpOffset(instr);
                     ip = instrAddr + offset;
                 }
-                break;
+                DISPATCH();
             }
 
             // Function call
-            case OP_CALL:
+            TARGET(OP_CALL):
                 VM_SYNC_IP();
                 handleCall(ctx, instr, extraData);
-                break;
+                DISPATCH();
+
+            TARGET(OP_CALLV):
 #if IS_WAD17_OR_HIGHER_ENABLED
-            case OP_CALLV:
                 VM_SYNC_IP();
                 handleCallV(ctx, instr);
-                break;
+                DISPATCH();
+#else
+#if VM_USE_COMPUTED_GOTO
+                goto do_unknown;
+#else
+                logError("VM: Unknown opcode 0x%02X at offset %u\n", opcode, instrAddr);
+                abort();
+#endif
 #endif
 
             // Return
-            case OP_RET: {
+            TARGET(OP_RET): {
                 RValue retVal = stackPop(ctx);
                 return retVal;
             }
 
             // Exit (no return value)
-            case OP_EXIT:
+            TARGET(OP_EXIT):
                 return scriptFallthroughReturnValue(ctx);
 
             // Environment (with-statements)
-            case OP_PUSHENV:
+            TARGET(OP_PUSHENV):
                 VM_SYNC_IP();
                 handlePushEnv(ctx, instr, instrAddr);
                 VM_RELOAD_IP();
-                break;
-            case OP_POPENV:
+                DISPATCH();
+            TARGET(OP_POPENV):
                 VM_SYNC_IP();
                 handlePopEnv(ctx, instr, instrAddr);
                 VM_RELOAD_IP();
-                break;
+                DISPATCH();
 
             // Break (extended opcodes in V17+, no-op/debug in V16)
-            case OP_BREAK:
+            TARGET(OP_BREAK):
 #if IS_WAD17_OR_HIGHER_ENABLED
                 handleBreak(ctx, instr, instrAddr, extraData);
 #endif
-                break;
+                DISPATCH();
 
+#if !VM_USE_COMPUTED_GOTO
             default:
                 logError("VM: Unknown opcode 0x%02X at offset %u\n", opcode, instrAddr);
                 abort();
         }
     }
+#else
+    do_unknown:
+        logError("VM: Unknown opcode 0x%02X at offset %u\n", opcode, instrAddr);
+        abort();
+#endif
 
+loop_end:
     return scriptFallthroughReturnValue(ctx);
 }
+
+#undef TARGET
+#undef DISPATCH
 
 // Rewrites WAD 14 bytecode opcodes to use WAD 16 bytecode opcodes
 static void rewriteBytecode14To16(VMContext* ctx) {
