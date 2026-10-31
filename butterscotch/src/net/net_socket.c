@@ -488,7 +488,11 @@ void net_poll_sockets(NetEventCallback on_event) {
             // Server handshake: waiting for client stage 2 greeting
             if (s->handshake_state == GM_HANDSHAKE_SERVER_WAIT_STAGE2) {
                 if (s->recv_len >= 16) {
-                    if (memcmp(s->recv_stream, GM_STAGE2_CLIENT, 16) == 0) {
+                    // GameMaker Studio 1.4: match magic 0xcafebabe, 0xdeadb00b, and header length 16.
+                    // The 4th dword is the client socket/nonce and varies across implementations.
+                    if (read_u32_le(s->recv_stream) == 0xcafebabe &&
+                        read_u32_le(s->recv_stream + 4) == 0xdeadb00b &&
+                        read_u32_le(s->recv_stream + 8) == 16) {
                         memmove(s->recv_stream, s->recv_stream + 16, s->recv_len - 16);
                         s->recv_len -= 16;
                         send(s->fd, GM_STAGE2_REPLY, sizeof(GM_STAGE2_REPLY), MSG_NOSIGNAL);

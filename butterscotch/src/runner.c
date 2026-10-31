@@ -4622,7 +4622,7 @@ static void on_network_socket_event(int32_t eventType, int32_t socketId, const c
 
     int32_t parentServer = net_socket_get_server_parent(socketId);
     int32_t eventId = socketId;
-    int32_t eventSock = -1;
+    int32_t eventSock = socketId;
 
     if (eventType == NET_EVENT_CONNECT || eventType == NET_EVENT_DISCONNECT) {
         if (parentServer >= 0) {
@@ -4634,7 +4634,7 @@ static void on_network_socket_event(int32_t eventType, int32_t socketId, const c
         }
     } else if (eventType == NET_EVENT_DATA) {
         eventId = socketId;
-        eventSock = -1;
+        eventSock = socketId;
     }
 
     shput(*mapPtr, safeStrdup("type"), RValue_makeReal((GMLReal)gmType));
