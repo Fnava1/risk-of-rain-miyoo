@@ -42,6 +42,22 @@ class TestFrustumCullingOptimizations(unittest.TestCase):
                       "drawInstanceNormally must check activeViewValid and !inGuiPass for default draw_self")
         self.assertIn("inst->x < runner->activeViewX", func_body,
                       "drawInstanceNormally must cull off-screen instances")
+        self.assertIn("!isNonGameplayRoom(runner->currentRoom)", func_body,
+                      "drawInstanceNormally must exempt non-gameplay rooms from culling")
+
+    def test_non_gameplay_room_safety(self):
+        """isNonGameplayRoom in runner.c must protect all menu, select, and cutscene rooms."""
+        path = os.path.join(self.butterscotch_src, "runner.c")
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            src = f.read()
+
+        func_start = src.find("static bool isNonGameplayRoom(Room* room)")
+        self.assertNotEqual(func_start, -1, "Missing isNonGameplayRoom definition")
+        func_end = src.find("static bool isArtifact8Box(", func_start)
+        func_body = src[func_start:func_end]
+
+        for room_prefix in ["rStart", "rSelect", "rInit", "rLogo", "rStorage", "rBook", "rHighscore", "rIntro", "rCutscene", "r2Cutscene", "rCredits", "rHost"]:
+            self.assertIn(room_prefix, func_body, f"isNonGameplayRoom must protect {room_prefix}")
 
     def test_builtin_draw_self_culling(self):
         """builtin_draw_self in vm_builtins.c must cull off-screen instances with camera views active."""

@@ -965,6 +965,26 @@ static void rebuildDrawableCacheIfDirty(Runner* runner) {
     }
 }
 
+static bool isNonGameplayRoom(Room* room) {
+    if (room == nullptr || room->name == nullptr) return false;
+    const char* n = room->name;
+    if (strncmp(n, "rStart", 6) == 0 ||
+        strncmp(n, "rSelect", 7) == 0 ||
+        strncmp(n, "rInit", 5) == 0 ||
+        strncmp(n, "rLogo", 5) == 0 ||
+        strncmp(n, "rStorage", 8) == 0 ||
+        strncmp(n, "rBook", 5) == 0 ||
+        strncmp(n, "rHighscore", 10) == 0 ||
+        strncmp(n, "rIntro", 6) == 0 ||
+        strncmp(n, "rCutscene", 9) == 0 ||
+        strncmp(n, "r2Cutscene", 10) == 0 ||
+        strncmp(n, "rCredits", 8) == 0 ||
+        strncmp(n, "rHost", 5) == 0) {
+        return true;
+    }
+    return false;
+}
+
 static bool isArtifact8Box(Runner* runner, int32_t objectIndex) {
     if (runner->dataWin == nullptr) return false;
     int32_t currentObj = objectIndex;
@@ -1004,26 +1024,30 @@ static void drawInstanceNormally(Runner* runner, Instance* inst) {
             }
         }
 
-        // Universal View Frustum Culling:
-        // Cull off-screen instances with sprites (enemies, chests, decorative objects, etc.)
-        // But never cull non-sprite controllers (oHUD, oDirector, etc.) or repositioned active Artifact8 boxes
-        if (runner->activeViewValid && !runner->inGuiPass && inst->spriteIndex >= 0 && !repositionedArtifact8) {
-            float margin = 160.0f;
-            float absScaleX = fabsf(inst->imageXscale);
-            float absScaleY = fabsf(inst->imageYscale);
-            float maxScale = (absScaleX > absScaleY) ? absScaleX : absScaleY;
-            if (maxScale > 1.0f) margin *= maxScale;
-            if (inst->x < runner->activeViewX - margin || inst->x > runner->activeViewX + runner->activeViewW + margin ||
-                inst->y < runner->activeViewY - margin || inst->y > runner->activeViewY + runner->activeViewH + margin) {
-                return;
-            }
-        }
-
         int32_t ownerObjectIndex = -1;
         int32_t codeId = findEventCodeIdAndOwner(runner, inst->objectIndex, EVENT_DRAW, DRAW_NORMAL, &ownerObjectIndex);
         if (codeId >= 0) {
             Runner_executeResolvedEvent(runner, inst, EVENT_DRAW, DRAW_NORMAL, codeId, ownerObjectIndex);
         } else if (runner->renderer != nullptr) {
+            // View Frustum Culling for instances without custom draw scripts:
+            // Safely cull off-screen sprites (enemies, chests, decorative objects) during gameplay.
+            // Never cull in non-gameplay rooms (menus, logos, cutscenes) or GUI passes.
+            if (runner->activeViewValid && !runner->inGuiPass && inst->spriteIndex >= 0 &&
+                !isNonGameplayRoom(runner->currentRoom)) {
+                float margin = 128.0f;
+                float absScaleX = fabsf(inst->imageXscale);
+                float absScaleY = fabsf(inst->imageYscale);
+                float maxScale = (absScaleX > absScaleY) ? absScaleX : absScaleY;
+                if (maxScale > 1.0f) margin *= maxScale;
+                if (inst->x < runner->activeViewX - margin || inst->x > runner->activeViewX + runner->activeViewW + margin ||
+                    inst->y < runner->activeViewY - margin || inst->y > runner->activeViewY + runner->activeViewH + margin) {
+                    if (repositionedArtifact8) {
+                        inst->x = origX;
+                        inst->y = origY;
+                    }
+                    return;
+                }
+            }
             Renderer_drawSelf(runner->renderer, inst);
         }
 
