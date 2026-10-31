@@ -95,6 +95,7 @@
 #define OTHER_ASYNC_SAVE_LOAD 72
 #define OTHER_BROADCAST_MESSAGE 76
 #define OTHER_ASYNC_SYSTEM   75
+#define OTHER_ASYNC_NETWORKING 68
 
 #define MAX_VIEWS 8
 #define MAX_SURFACES 16
@@ -1034,6 +1035,7 @@ void Runner_moveInstanceToDepthLayer(Runner* runner, Instance* inst, int32_t dep
 void Runner_removeInstanceLayerElement(Runner* runner, int32_t instanceId);
 uint32_t Runner_getNextLayerId(Runner* runner);
 void Runner_freeRuntimeLayer(RuntimeLayer* runtimeLayer);
+void Runner_processNetworkEvents(Runner* runner);
 // Sets the active state of the instance
 static inline void Runner_setActiveState(Runner* runner, Instance* instance, bool active) {
 #ifdef ENABLE_VM_TRACING

@@ -10,6 +10,7 @@
 #include "collision.h"
 #include "video.h"
 #include "fmod/fmod.h"
+#include "net/net_socket.h"
 
 #include <stdint.h>
 #include "stdio_compat.h"
@@ -4593,6 +4594,77 @@ static void dispatchSpriteMessages(Runner* runner, PendingSpriteMessage* pending
     }
 }
 
+
+// ===[ Asynchronous Networking Events ]===
+static Runner* s_network_runner = nullptr;
+
+static void on_network_socket_event(int32_t eventType, int32_t socketId, const char* ip, int32_t port, const uint8_t* data, size_t size) {
+    if (s_network_runner == nullptr) return;
+    Runner* runner = s_network_runner;
+
+    int32_t bufId = -1;
+    if (eventType == NET_EVENT_DATA && data != nullptr && size > 0) {
+        bufId = gmlBufferCreate(runner, (int32_t)size, GML_BUFFER_FIXED, 1);
+        GmlBuffer* b = gmlBufferGet(runner, bufId);
+        if (b != nullptr && b->data != nullptr) {
+            memcpy(b->data, data, size);
+            b->usedSize = (int32_t)size;
+        }
+    }
+
+    DsMapEntry* map = nullptr;
+    arrput(runner->dsMapPool, map);
+    int32_t mapId = (int32_t)arrlen(runner->dsMapPool) - 1;
+    DsMapEntry** mapPtr = &runner->dsMapPool[mapId];
+
+    double gmType = (eventType == NET_EVENT_CONNECT) ? 1.0 :
+                    (eventType == NET_EVENT_DISCONNECT) ? 2.0 : 3.0;
+
+    shput(*mapPtr, safeStrdup("type"), RValue_makeReal((GMLReal)gmType));
+    shput(*mapPtr, safeStrdup("id"), RValue_makeReal((GMLReal)socketId));
+    shput(*mapPtr, safeStrdup("ip"), RValue_makeOwnedString(safeStrdup(ip ? ip : "")));
+    shput(*mapPtr, safeStrdup("port"), RValue_makeReal((GMLReal)port));
+
+    if (eventType == NET_EVENT_CONNECT) {
+        shput(*mapPtr, safeStrdup("succeeded"), RValue_makeReal(1.0));
+    } else if (eventType == NET_EVENT_DATA) {
+        shput(*mapPtr, safeStrdup("buffer"), RValue_makeReal((GMLReal)bufId));
+        shput(*mapPtr, safeStrdup("size"), RValue_makeReal((GMLReal)size));
+    }
+
+    runner->asyncLoadMapId = mapId;
+    Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ASYNC_NETWORKING);
+
+    // Clean up ds_map
+    mapPtr = &runner->dsMapPool[mapId];
+    if (*mapPtr != nullptr) {
+        repeat(shlen(*mapPtr), j) {
+            free((*mapPtr)[j].key);
+            RValue_free(&(*mapPtr)[j].value);
+        }
+        shfree(*mapPtr);
+        *mapPtr = nullptr;
+    }
+    runner->asyncLoadMapId = -1;
+
+    // Clean up temporary packet buffer if allocated
+    if (bufId >= 0) {
+        GmlBuffer* b = gmlBufferGet(runner, bufId);
+        if (b != nullptr) {
+            free(b->data);
+            b->data = nullptr;
+            b->isValid = false;
+        }
+    }
+}
+
+void Runner_processNetworkEvents(Runner* runner) {
+    if (runner == nullptr) return;
+    s_network_runner = runner;
+    net_poll_sockets(on_network_socket_event);
+    s_network_runner = nullptr;
+}
+
 void Runner_step(Runner* runner) {
 #ifdef ENABLE_FMOD
     if (runner->audioSystem && runner->audioSystem->fmodSystem) {
@@ -4970,6 +5042,7 @@ void Runner_step(Runner* runner) {
     }
 
     Video_executePendingAsyncEvents(runner);
+    Runner_processNetworkEvents(runner);
 
     // Dispatch collision events
     if (!runner->physics) dispatchCollisionEvents(runner);
