@@ -235,13 +235,37 @@ def patch_clay_man_ai(code: str) -> str:
 
 def patch_boss_shadow_effects(code: str) -> str:
     """
-    Throttles Providence Shadow clone (oBoss2Clone) particle emissions and redundant
-    additive alpha passes, preventing severe slowdown during final boss shadow phase. (Bug 10)
+    Throttles Providence Shadow clone (oBoss2Clone) particle emissions, redundant
+    additive alpha passes, and eliminates mid-frame instance_create in oBoss2Clone_Draw_0. (Bugs 10 & 11)
     """
     patched = code
+    # 1. Eliminate instance_create(..., oEfTrail) in Draw event to prevent mid-frame drawableListStructureDirty invalidation
+    if "oEfTrail" in patched and "instance_create" in patched:
+        replacement = "draw_sprite_ext(sprite_index, image_index, xprevious, yprevious, image_xscale, image_yscale, image_angle, c_black, 0.2);"
+        patched = re.sub(r'instance_create\s*\([^;)]*oEfTrail[^;)]*\)\s*;', replacement, patched)
+
+    # 2. Particle throttling
     if "part_particles_create" in patched:
         wrap = r'if (((current_time div 16) % 2) == 0) { \1; }'
         patched = re.sub(r'(\bpart_particles_create\s*\([^;]+;)', wrap, patched)
+    return patched
+
+def patch_guard_and_bullet(code: str) -> str:
+    """
+    Optimizes Temple Guard (oGuard) and Sanctuary Guard (oGuardG) projectiles and passes:
+    1. Decimates / throttles concentric draw_circle_color calls in oGuardBullet_Draw_0.
+    2. Protects fill-rate on handheld screen.
+    """
+    patched = code
+    if "draw_circle_color" in patched:
+        header = (
+            "// [MMP CPU Optimization] Guard Bullet Circle Decimation\n"
+            "var __bullet_draw = (((current_time div 16) % 2) == 0);\n"
+        )
+        if "__bullet_draw" not in patched:
+            patched = header + patched
+        guard = r'if (__bullet_draw) { \1; }'
+        patched = re.sub(r'(\bdraw_circle_color\s*\([^;]+;)', guard, patched)
     return patched
 
 def patch_player_skill_watchdog(code: str) -> str:
@@ -357,15 +381,22 @@ def patch_heavy_boss_spawns(code: str) -> str:
     """
     Optimizes heavy bosses with frequent instance activation or dense circles:
     1. Decimates oBoar_Step_2 (Toxic Beast) instance_activate_region to run every 15 frames.
-    2. Viewport-guards oWurmHead_Draw_0 circle rendering.
+    2. Limits concurrent Boarlits (oBoarM) in oBoar_Step_2 to max 14.
+    3. Viewport-guards and throttles oWurmHead_Draw_0 circle and lightning rendering.
     """
     patched = code
     if "instance_activate_region" in patched:
         wrap = r'if (((current_time div 16) % 15) == 0) { \1; }'
         patched = re.sub(r'(\binstance_activate_region\s*\([^;]+;)', wrap, patched)
+    if "oBoarM" in patched and "instance_create" in patched:
+        boar_cap = r'if (instance_number(oBoarM) < 14) { \1; }'
+        patched = re.sub(r'(\binstance_create\s*\([^;)]*oBoarM[^;)]*\)\s*;)', boar_cap, patched)
     if "draw_circle" in patched:
-        wrap = r'if (x >= view_xview[0] - 48 && x <= view_xview[0] + view_wview[0] + 48 && y >= view_yview[0] - 48 && y <= view_yview[0] + view_hview[0] + 48) { \1; }'
+        wrap = r'if (x >= view_xview[0] - 48 && x <= view_xview[0] + view_wview[0] + 48 && y >= view_yview[0] - 48 && y <= view_yview[0] + view_hview[0] + 48 && (((current_time div 16) % 2) == 0)) { \1; }'
         patched = re.sub(r'(\bdraw_circle\s*\([^;]+;)', wrap, patched)
+    if "draw_lightning" in patched:
+        wrap = r'if (((current_time div 16) % 2) == 0) { \1; }'
+        patched = re.sub(r'(\bdraw_lightning\s*\([^;]+;)', wrap, patched)
     return patched
 
 def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
@@ -387,8 +418,10 @@ def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
             patched = patch_stage_transition_pacing(patched)
         elif "clay" in name.lower():
             patched = patch_clay_man_ai(patched)
-        elif "boss" in name.lower() or "clone" in name.lower():
+        elif any(k in name.lower() for k in ["boss", "clone", "trail"]):
             patched = patch_boss_shadow_effects(patched)
+        elif any(k in name.lower() for k in ["guard", "bullet"]):
+            patched = patch_guard_and_bullet(patched)
         elif "player" in name.lower() and ("step" in name.lower() or "key" in name.lower()):
             patched = patch_player_skill_watchdog(patched)
         elif any(k in name.lower() for k in ["blaze", "burn", "fire"]):

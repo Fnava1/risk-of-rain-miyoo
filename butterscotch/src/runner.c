@@ -965,25 +965,71 @@ static void rebuildDrawableCacheIfDirty(Runner* runner) {
     }
 }
 
+static bool isArtifact8Box(Runner* runner, int32_t objectIndex) {
+    if (runner->dataWin == nullptr) return false;
+    int32_t currentObj = objectIndex;
+    while (currentObj >= 0 && (uint32_t)currentObj < runner->dataWin->objt.count) {
+        GameObject* obj = &runner->dataWin->objt.objects[currentObj];
+        if (obj->name != nullptr) {
+            if (strstr(obj->name, "Artifact8Box") != nullptr || strcmp(obj->name, "pArtifact8Box") == 0) {
+                return true;
+            }
+        }
+        currentObj = obj->parentId;
+    }
+    return false;
+}
+
 static void drawInstanceNormally(Runner* runner, Instance* inst) {
     if (runner->drawEnabled) {
+        bool isArtifact8 = isArtifact8Box(runner, inst->objectIndex);
+        float origX = inst->x;
+        float origY = inst->y;
+        bool repositionedArtifact8 = false;
+
+        if (isArtifact8 && runner->activeViewValid) {
+            ptrdiff_t slot = (runner->vmContext != nullptr) ? shgeti(runner->vmContext->varNameMap, "active") : -1;
+            bool isActive = false;
+            if (slot != -1) {
+                int32_t varId = runner->vmContext->varNameMap[slot].value;
+                RValue val = IntRValueHashMap_get(&inst->selfVars, varId);
+                if (RValue_toBool(val)) {
+                    isActive = true;
+                }
+            }
+            if (isActive) {
+                inst->x = runner->activeViewX + runner->activeViewW * 0.5f;
+                inst->y = runner->activeViewY + 174.0f;
+                repositionedArtifact8 = true;
+            }
+        }
+
+        // Universal View Frustum Culling:
+        // Cull off-screen instances with sprites (enemies, chests, decorative objects, etc.)
+        // But never cull non-sprite controllers (oHUD, oDirector, etc.) or repositioned active Artifact8 boxes
+        if (runner->activeViewValid && !runner->inGuiPass && inst->spriteIndex >= 0 && !repositionedArtifact8) {
+            float margin = 160.0f;
+            float absScaleX = fabsf(inst->imageXscale);
+            float absScaleY = fabsf(inst->imageYscale);
+            float maxScale = (absScaleX > absScaleY) ? absScaleX : absScaleY;
+            if (maxScale > 1.0f) margin *= maxScale;
+            if (inst->x < runner->activeViewX - margin || inst->x > runner->activeViewX + runner->activeViewW + margin ||
+                inst->y < runner->activeViewY - margin || inst->y > runner->activeViewY + runner->activeViewH + margin) {
+                return;
+            }
+        }
+
         int32_t ownerObjectIndex = -1;
         int32_t codeId = findEventCodeIdAndOwner(runner, inst->objectIndex, EVENT_DRAW, DRAW_NORMAL, &ownerObjectIndex);
         if (codeId >= 0) {
             Runner_executeResolvedEvent(runner, inst, EVENT_DRAW, DRAW_NORMAL, codeId, ownerObjectIndex);
         } else if (runner->renderer != nullptr) {
-            if (runner->activeViewValid && !runner->inGuiPass && inst->spriteIndex >= 0) {
-                float margin = 128.0f;
-                float absScaleX = fabsf(inst->imageXscale);
-                float absScaleY = fabsf(inst->imageYscale);
-                float maxScale = (absScaleX > absScaleY) ? absScaleX : absScaleY;
-                if (maxScale > 1.0f) margin *= maxScale;
-                if (inst->x < runner->activeViewX - margin || inst->x > runner->activeViewX + runner->activeViewW + margin ||
-                    inst->y < runner->activeViewY - margin || inst->y > runner->activeViewY + runner->activeViewH + margin) {
-                    return;
-                }
-            }
             Renderer_drawSelf(runner->renderer, inst);
+        }
+
+        if (repositionedArtifact8) {
+            inst->x = origX;
+            inst->y = origY;
         }
     }
 }
