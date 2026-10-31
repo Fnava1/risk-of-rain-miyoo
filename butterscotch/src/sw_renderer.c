@@ -642,7 +642,9 @@ static void blitSubRect(SWRenderer *sw, uint32_t pageId,
             uint16_t pix = s_rgb_row[sampleX];
             if (needsTint) pix = tint_rgb565(pix, tr, tg, tb);
 
-            if (a == 255) {
+            if (sw->blendMode == bm_add) {
+                d_ptr[x] = blend_pixel_rgb565_add(d_ptr[x], pix, a);
+            } else if (a == 255 && !needsTint && globalAlpha >= 0.999f) {
                 d_ptr[x] = pix;
             } else {
                 d_ptr[x] = blend_pixel_rgb565(d_ptr[x], pix, a);
@@ -731,7 +733,9 @@ static void blitRotatedSubRect(SWRenderer *sw, uint32_t pageId,
                     if (a == 0) continue;
 
                     uint16_t pix = page->rgb[sampleIdx];
-                    if (a == 255) {
+                    if (sw->blendMode == bm_add) {
+                        d_row[x] = blend_pixel_rgb565_add(d_row[x], pix, a);
+                    } else if (a == 255) {
                         d_row[x] = pix;
                     } else {
                         d_row[x] = blend_pixel_rgb565(d_row[x], pix, a);
@@ -766,7 +770,9 @@ static void blitRotatedSubRect(SWRenderer *sw, uint32_t pageId,
                     uint16_t pix = page->rgb[sampleIdx];
                     if (needsTint) pix = tint_rgb565(pix, tr, tg, tb);
 
-                    if (a == 255) {
+                    if (sw->blendMode == bm_add) {
+                        d_row[x] = blend_pixel_rgb565_add(d_row[x], pix, a);
+                    } else if (a == 255 && !needsTint && globalAlpha >= 0.999f) {
                         d_row[x] = pix;
                     } else {
                         d_row[x] = blend_pixel_rgb565(d_row[x], pix, a);

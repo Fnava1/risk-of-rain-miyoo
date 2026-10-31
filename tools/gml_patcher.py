@@ -142,34 +142,47 @@ def patch_nematocyst_and_missile_logic(code: str) -> str:
 
 def patch_command_artifact_grid_bounds(code: str) -> str:
     """
-    Clamps Artifact of Command item selection grid coordinates within the handheld viewport
+    Clamps and centers Artifact of Command item selection grid coordinates within the handheld viewport
     (view_xview[0], view_yview[0], view_wview[0], view_hview[0]) and ensures elements
-    do not render behind the top-left HP bar / skills (safe HUD margin: 48px). (Bug 5)
+    do not render behind the top HUD bar / skills (safe HUD margin: 48-52px). (Bug 5)
     """
     patched = code
 
-    # Clamp draw_x or horizontal positioning
+    # 1. Direct viewport centering for pArtifact8Box_Draw_0 grid
+    if "tx =" in patched or "tx=" in patched:
+        patched = re.sub(
+            r'(\btx\s*=\s*)([^;\n]+)(;)',
+            r'var __grid_x0 = view_xview[0] + (view_wview[0] - (10 * 38)) / 2; \1__grid_x0 + tc * 38\3',
+            patched
+        )
+    if "ty =" in patched or "ty=" in patched:
+        patched = re.sub(
+            r'(\bty\s*=\s*)([^;\n]+)(;)',
+            r'var __grid_y0 = view_yview[0] + 52; \1__grid_y0 + tr * 38\3',
+            patched
+        )
+
+    # 2. Fallback clamps for draw_x / x and draw_y / y
     if "draw_x" in patched:
         patched = re.sub(
             r'(\b(?:var\s+)?draw_x\s*=\s*)([^;\n]+)(;)',
             r'\1clamp(\2, view_xview[0] + 16, view_xview[0] + view_wview[0] - 16)\3',
             patched
         )
-    elif "x = " in patched and "view_xview" not in patched:
+    elif "x = " in patched and "view_xview" not in patched and "tx" not in patched:
         patched = re.sub(
             r'(\bx\s*=\s*)([^;\n]+)(;)',
             r'\1clamp(\2, view_xview[0] + 16, view_xview[0] + view_wview[0] - 16)\3',
             patched
         )
 
-    # Clamp draw_y or vertical positioning (with 48px HUD safe zone)
     if "draw_y" in patched:
         patched = re.sub(
             r'(\b(?:var\s+)?draw_y\s*=\s*)([^;\n]+)(;)',
             r'\1clamp(\2, view_yview[0] + 48, view_yview[0] + view_hview[0] - 16)\3',
             patched
         )
-    elif "y = " in patched and "view_yview" not in patched:
+    elif "y = " in patched and "view_yview" not in patched and "ty" not in patched:
         patched = re.sub(
             r'(\by\s*=\s*)([^;\n]+)(;)',
             r'\1clamp(\2, view_yview[0] + 48, view_yview[0] + view_hview[0] - 16)\3',
@@ -264,6 +277,97 @@ def patch_player_skill_watchdog(code: str) -> str:
 
     return patched
 
+def patch_blaze_particles(code: str) -> str:
+    """
+    Throttles oEfBlaze particle emissions across burning enemies.
+    Emits particles 1 out of 3 frames across instances using ((id + (current_time div 16)) % 3 == 0),
+    reducing particle engine CPU load by 66% while preserving continuous burn damage ticks.
+    """
+    patched = code
+    if "part_particles_create_color" in patched:
+        wrap = r'if (((id + (current_time div 16)) % 3) == 0) { \1; }'
+        patched = re.sub(r'(\bpart_particles_create_color\s*\([^;]+;)', wrap, patched)
+    elif "part_particles_create" in patched:
+        wrap = r'if (((id + (current_time div 16)) % 3) == 0) { \1; }'
+        patched = re.sub(r'(\bpart_particles_create\s*\([^;]+;)', wrap, patched)
+    return patched
+
+def patch_poison_entity_scanning(code: str) -> str:
+    """
+    Staggers expensive instance_nearest_variable scans in oEfPoison (poison debuff).
+    Checks 1 out of 4 frames per entity, preventing massive CPU spikes when dozens of monsters are poisoned.
+    """
+    patched = code
+    if "instance_nearest_variable" in patched:
+        header = (
+            "// [MMP CPU Optimization] Poison Instance Search Decimation\n"
+            "var __mmp_poison_scan = (((id + (current_time div 16)) % 4) == 0);\n"
+        )
+        if "__mmp_poison_scan" not in patched:
+            patched = header + patched
+        guard = r'(__mmp_poison_scan && (\1 != noone))'
+        patched = re.sub(r'(\binstance_nearest_variable\s*\([^;)]+\)\s*!=\s*noone)', guard, patched)
+    return patched
+
+def patch_chain_lightning_fx(code: str) -> str:
+    """
+    Optimizes electric arcs in oChainLightning_Draw_0 (Ukulele, Tesla Coil).
+    Throttles redundant filled alpha circle drawing, preventing rasterizer saturation
+    when lightning chains across clustered enemy groups.
+    """
+    patched = code
+    if "draw_circle" in patched:
+        wrap = r'if (((current_time div 16) % 2) == 0) { \1; }'
+        patched = re.sub(r'(\bdraw_circle\s*\([^;]+;)', wrap, patched)
+    return patched
+
+def patch_enemy_aura_and_fog(code: str) -> str:
+    """
+    Optimizes enemy glow auras and white damage fog flashes in draw_ai_default:
+    1. Viewport culls additive glow passes (bm_add) for off-screen / margin entities.
+    2. Throttles d3d_set_fog white flashes during recurring damage to max 1 every 2 frames.
+    """
+    patched = code
+    if "draw_set_blend_mode" in patched and "bm_add" in patched:
+        guard = (
+            "if (x >= view_xview[0] - 64 && x <= view_xview[0] + view_wview[0] + 64 && "
+            "y >= view_yview[0] - 64 && y <= view_yview[0] + view_hview[0] + 64) { "
+            r"\1; }"
+        )
+        patched = re.sub(
+            r'(\bdraw_set_blend_mode\s*\(\s*bm_add\s*\)\s*;[\s\S]*?\bdraw_set_blend_mode\s*\(\s*bm_normal\s*\)\s*;)',
+            guard,
+            patched
+        )
+
+    if "d3d_set_fog" in patched:
+        header = (
+            "// [MMP Fog Flash Throttling]\n"
+            "if (!variable_instance_exists(id, \"__mmp_fog_tick\")) __mmp_fog_tick = 0;\n"
+            "__mmp_fog_tick += 1;\n"
+        )
+        if "__mmp_fog_tick" not in patched:
+            patched = header + patched
+        wrap_fog = r'if (__mmp_fog_tick % 2 == 0) { \1; }'
+        patched = re.sub(r'(\bd3d_set_fog\s*\(\s*true[^;]+;[\s\S]*?\bd3d_set_fog\s*\(\s*false[^;]+;)', wrap_fog, patched)
+
+    return patched
+
+def patch_heavy_boss_spawns(code: str) -> str:
+    """
+    Optimizes heavy bosses with frequent instance activation or dense circles:
+    1. Decimates oBoar_Step_2 (Toxic Beast) instance_activate_region to run every 15 frames.
+    2. Viewport-guards oWurmHead_Draw_0 circle rendering.
+    """
+    patched = code
+    if "instance_activate_region" in patched:
+        wrap = r'if (((current_time div 16) % 15) == 0) { \1; }'
+        patched = re.sub(r'(\binstance_activate_region\s*\([^;]+;)', wrap, patched)
+    if "draw_circle" in patched:
+        wrap = r'if (x >= view_xview[0] - 48 && x <= view_xview[0] + view_wview[0] + 48 && y >= view_yview[0] - 48 && y <= view_yview[0] + view_hview[0] + 48) { \1; }'
+        patched = re.sub(r'(\bdraw_circle\s*\([^;]+;)', wrap, patched)
+    return patched
+
 def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
     """Apply targeted patches across all extracted GML scripts."""
     out = {}
@@ -275,7 +379,7 @@ def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
             patched = inject_distance_decimation_guard(patched)
         elif "damage" in name.lower():
             patched = patch_damage_text_batching(patched)
-        elif any(k in name.lower() for k in ["jelly", "missile", "wurm", "use_item"]):
+        elif any(k in name.lower() for k in ["jelly", "missile", "use_item"]):
             patched = patch_nematocyst_and_missile_logic(patched)
         elif any(k in name.lower() for k in ["artifact8", "select", "fairitem"]):
             patched = patch_command_artifact_grid_bounds(patched)
@@ -287,5 +391,15 @@ def apply_all_gml_optimizations(scripts: Dict[str, str]) -> Dict[str, str]:
             patched = patch_boss_shadow_effects(patched)
         elif "player" in name.lower() and ("step" in name.lower() or "key" in name.lower()):
             patched = patch_player_skill_watchdog(patched)
+        elif any(k in name.lower() for k in ["blaze", "burn", "fire"]):
+            patched = patch_blaze_particles(patched)
+        elif "poison" in name.lower():
+            patched = patch_poison_entity_scanning(patched)
+        elif any(k in name.lower() for k in ["chain", "lightning"]):
+            patched = patch_chain_lightning_fx(patched)
+        elif any(k in name.lower() for k in ["ai_default", "draw_enemy"]):
+            patched = patch_enemy_aura_and_fog(patched)
+        elif any(k in name.lower() for k in ["boar", "wurm"]):
+            patched = patch_heavy_boss_spawns(patched)
         out[name] = patched
     return out
