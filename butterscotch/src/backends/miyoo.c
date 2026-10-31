@@ -997,7 +997,7 @@ void *platformGetProcAddress(const char *name) {
     if ((state_var) && !(prev_var)) { \
         RunnerKeyboard_onKeyDown(g_runner->keyboard, (gml_key)); \
     } else if (!(state_var)) { \
-        if ((prev_var) || (g_runner->keyboard && g_runner->keyboard->keyState[(gml_key)])) { \
+        if ((prev_var) || (g_runner->keyboard && g_runner->keyboard->keyDown[(gml_key)])) { \
             RunnerKeyboard_onKeyUp(g_runner->keyboard, (gml_key)); \
         } \
     } \

@@ -570,26 +570,10 @@ static void blitSubRect(SWRenderer *sw, uint32_t pageId,
                 for (int c = 0; c < w; c++) {
                     uint8_t a = (uint8_t)((s_alpha[c] * ga_int) >> 8);
                     if (a == 0) continue;
-                    uint16_t pix = needsTint ? blend_pixel_rgb565_tint(s_rgb[c], tr, tg, tb) : s_rgb[c];
+                    uint16_t pix = needsTint ? tint_rgb565(s_rgb[c], tr, tg, tb) : s_rgb[c];
                     if (sw->blendMode == bm_add) {
                         d_ptr[c] = blend_pixel_rgb565_add(d_ptr[c], pix, a);
                     } else if (a == 255 && !needsTint && globalAlpha >= 0.999f) {
-                        d_ptr[c] = pix;
-                    } else {
-                        d_ptr[c] = blend_pixel_rgb565(d_ptr[c], pix, a);
-                    }
-                }
-            }
-        }
-                    uint8_t a = s_alpha[c];
-                    if (a == 0) continue;
-                    if (globalAlpha < 0.999f) a = (uint8_t)((a * ga_int) >> 8);
-                    if (a == 0) continue;
-
-                    uint16_t pix = s_rgb[c];
-                    if (needsTint) pix = tint_rgb565(pix, tr, tg, tb);
-
-                    if (a == 255) {
                         d_ptr[c] = pix;
                     } else {
                         d_ptr[c] = blend_pixel_rgb565(d_ptr[c], pix, a);
