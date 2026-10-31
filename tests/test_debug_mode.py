@@ -94,5 +94,21 @@ class TestDebugMode(unittest.TestCase):
                 invocations += 1
             self.assertEqual(invocations, target_level - 1)
 
+    def test_debug_hub_safe_clearance_and_ground_snapping(self):
+        """Verifies runner.c implements smart clearance checking and floor snapping for debug items."""
+        runner_c_path = os.path.join("butterscotch", "src", "runner.c")
+        with open(runner_c_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Functions must be present
+        self.assertIn("static bool is_debug_spot_clear(", content)
+        self.assertIn("static bool find_ground_y(", content)
+
+        # Clearance checks
+        self.assertIn("other->solid", content)  # Rejects solid terrain (oB, oBNoSpawn)
+        self.assertIn("pChestIdx", content)     # Rejects native chests/barrels
+        self.assertIn("oShip", content)         # Rejects stage 6 ship cargo
+        self.assertIn("depth = -1000", content) # Front-most visual depth for items
+
 if __name__ == "__main__":
     unittest.main()

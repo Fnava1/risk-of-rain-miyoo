@@ -4436,6 +4436,132 @@ void Runner_handlePendingRoomChange(Runner* runner) {
     }
 }
 
+static bool is_debug_spot_clear(Runner* runner, float x, float y, float halfW, float halfH, int32_t ignoreInstId) {
+    if (!runner || !runner->currentRoom) return false;
+
+    float minX = x - halfW;
+    float maxX = x + halfW;
+    float minY = y - halfH;
+    float maxY = y + halfH;
+
+    if (minX < 16.0f || maxX > (float)runner->currentRoom->width - 16.0f) return false;
+    if (minY < 16.0f || maxY > (float)runner->currentRoom->height - 16.0f) return false;
+
+    if (runner->spatialGrid != nullptr) {
+        SpatialGridQuery query = SpatialGrid_prepareQuery(runner, minX, minY, maxX, maxY, INSTANCE_ALL);
+        int32_t pChestIdx = shget(runner->assetsByName, "pChest");
+
+        for (int32_t gx = query.range.minGridX; gx <= query.range.maxGridX; gx++) {
+            for (int32_t gy = query.range.minGridY; gy <= query.range.maxGridY; gy++) {
+                Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+                int32_t cellLen = (int32_t) arrlen(cell);
+                for (int32_t ci = 0; ci < cellLen; ci++) {
+                    Instance* other = cell[ci];
+                    if (!other || other->destroyed || !other->active) continue;
+                    if ((int32_t)other->instanceId == ignoreInstId) continue;
+                    if (other->lastCollisionQueryId == query.queryId) continue;
+                    other->lastCollisionQueryId = query.queryId;
+
+                    InstanceBBox otherBBox = Collision_computeBBox(runner, other);
+                    if (!otherBBox.valid) continue;
+                    if (minX >= otherBBox.right || otherBBox.left >= maxX ||
+                        minY >= otherBBox.bottom || otherBBox.top >= maxY) continue;
+
+                    // 1. Any solid terrain block (oB, oBNoSpawn, etc.)
+                    if (other->solid) return false;
+
+                    // 2. Pre-existing containers, cargo, chests, barrels, doors
+                    if (other->objectIndex >= 0 && (uint32_t)other->objectIndex < runner->dataWin->objt.count) {
+                        const char* oname = runner->dataWin->objt.objects[other->objectIndex].name;
+                        if (oname) {
+                            if (strncmp(oname, "oShip", 5) == 0 ||
+                                strncmp(oname, "oBarrel", 7) == 0 ||
+                                strncmp(oname, "oBlastdoor", 10) == 0 ||
+                                strncmp(oname, "oMedcab", 7) == 0 ||
+                                strncmp(oname, "oMedbay", 7) == 0 ||
+                                strncmp(oname, "oChest", 6) == 0 ||
+                                strncmp(oname, "oGunchest", 9) == 0 ||
+                                strncmp(oname, "oUsechest", 9) == 0 ||
+                                strncmp(oname, "oSign", 5) == 0 ||
+                                strncmp(oname, "oDoor", 5) == 0) {
+                                return false;
+                            }
+                        }
+                    }
+
+                    if (pChestIdx >= 0 && VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, pChestIdx)) {
+                        return false;
+                    }
+
+                    // 3. Already spawned debug boxes
+                    for (int b = 0; b < 4; b++) {
+                        if (runner->debug_box_ids[b] > 0 && (int32_t)other->instanceId == runner->debug_box_ids[b]) {
+                            return false;
+                        }
+                    }
+
+                    // 4. Already spawned boss items
+                    for (int b = 0; b < 5; b++) {
+                        if (runner->debug_boss_ids[b] > 0 && (int32_t)other->instanceId == runner->debug_boss_ids[b]) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool find_ground_y(Runner* runner, float x, float refY, float* outGroundY) {
+    if (!runner || !runner->spatialGrid) {
+        *outGroundY = refY;
+        return true;
+    }
+
+    float searchMinY = refY - 24.0f;
+    float searchMaxY = refY + 48.0f;
+    SpatialGridQuery query = SpatialGrid_prepareQuery(runner, x - 4.0f, searchMinY, x + 4.0f, searchMaxY, INSTANCE_ALL);
+
+    float bestY = 999999.0f;
+    bool found = false;
+
+    for (int32_t gx = query.range.minGridX; gx <= query.range.maxGridX; gx++) {
+        for (int32_t gy = query.range.minGridY; gy <= query.range.maxGridY; gy++) {
+            Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+            int32_t cellLen = (int32_t) arrlen(cell);
+            for (int32_t ci = 0; ci < cellLen; ci++) {
+                Instance* other = cell[ci];
+                if (!other || other->destroyed || !other->active || !other->solid) continue;
+                if (other->lastCollisionQueryId == query.queryId) continue;
+                other->lastCollisionQueryId = query.queryId;
+
+                InstanceBBox b = Collision_computeBBox(runner, other);
+                if (!b.valid) continue;
+
+                if (x >= b.left && x <= b.right) {
+                    if (b.top >= searchMinY && b.top <= searchMaxY) {
+                        float diff = fabsf(b.top - refY);
+                        if (!found || diff < fabsf(bestY - refY)) {
+                            bestY = b.top;
+                            found = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (found) {
+        *outGroundY = bestY;
+        return true;
+    }
+
+    *outGroundY = refY;
+    return true;
+}
+
 void runner_spawn_debug_hub(Runner* runner, Instance* playerInst) {
     if (!runner || !playerInst || !runner->dataWin) return;
 
@@ -4465,28 +4591,116 @@ void runner_spawn_debug_hub(Runner* runner, Instance* playerInst) {
         }
     }
 
-    // 3. Spawn 4 Command Boxes to the left of the player
-    // White/Common, Green/Uncommon, Red/Rare, Orange/Use
+    if (runner->spatialGrid != nullptr) {
+        SpatialGrid_syncGrid(runner, runner->spatialGrid);
+    }
+
+    float boxPos[4][2];
+    float bossPos[5][2];
+    float accepted[9][2];
+    int numAccepted = 0;
+
+    // 3. Find 4 safe slots for Command Boxes (prefer leftward, then rightward)
+    static const float dirSigns[2] = { -1.0f, 1.0f };
+    int boxCount = 0;
+    for (int d = 0; d < 2 && boxCount < 4; d++) {
+        float sign = dirSigns[d];
+        for (int step = 1; step <= 30 && boxCount < 4; step++) {
+            float candX = playerInst->x + sign * (step * 26.0f);
+            float groundY = playerInst->y;
+            find_ground_y(runner, candX, playerInst->y, &groundY);
+
+            // Test air space clearance 2px to 20px above the floor
+            if (!is_debug_spot_clear(runner, candX, groundY - 11.0f, 12.0f, 9.0f, (int32_t)playerInst->instanceId)) {
+                continue;
+            }
+
+            bool tooClose = false;
+            for (int s = 0; s < numAccepted; s++) {
+                if (fabsf(candX - accepted[s][0]) < 22.0f && fabsf(groundY - accepted[s][1]) < 16.0f) {
+                    tooClose = true;
+                    break;
+                }
+            }
+            if (tooClose) continue;
+
+            boxPos[boxCount][0] = candX;
+            boxPos[boxCount][1] = groundY;
+            accepted[numAccepted][0] = candX;
+            accepted[numAccepted][1] = groundY;
+            numAccepted++;
+            boxCount++;
+        }
+    }
+
+    for (int b = boxCount; b < 4; b++) {
+        boxPos[b][0] = playerInst->x - ((b + 1) * 26.0f);
+        boxPos[b][1] = playerInst->y;
+        accepted[numAccepted][0] = boxPos[b][0];
+        accepted[numAccepted][1] = boxPos[b][1];
+        numAccepted++;
+    }
+
+    // 4. Find 5 safe slots for Boss Items (prefer rightward, then leftward)
+    int bossCount = 0;
+    for (int d = 1; d >= 0 && bossCount < 5; d--) {
+        float sign = dirSigns[d];
+        for (int step = 1; step <= 35 && bossCount < 5; step++) {
+            float candX = playerInst->x + sign * (step * 26.0f);
+            float groundY = playerInst->y;
+            find_ground_y(runner, candX, playerInst->y, &groundY);
+
+            if (!is_debug_spot_clear(runner, candX, groundY - 11.0f, 12.0f, 9.0f, (int32_t)playerInst->instanceId)) {
+                continue;
+            }
+
+            bool tooClose = false;
+            for (int s = 0; s < numAccepted; s++) {
+                if (fabsf(candX - accepted[s][0]) < 22.0f && fabsf(groundY - accepted[s][1]) < 16.0f) {
+                    tooClose = true;
+                    break;
+                }
+            }
+            if (tooClose) continue;
+
+            bossPos[bossCount][0] = candX;
+            bossPos[bossCount][1] = groundY;
+            accepted[numAccepted][0] = candX;
+            accepted[numAccepted][1] = groundY;
+            numAccepted++;
+            bossCount++;
+        }
+    }
+
+    for (int b = bossCount; b < 5; b++) {
+        bossPos[b][0] = playerInst->x + ((b + 1) * 26.0f);
+        bossPos[b][1] = playerInst->y;
+        accepted[numAccepted][0] = bossPos[b][0];
+        accepted[numAccepted][1] = bossPos[b][1];
+        numAccepted++;
+    }
+
+    // Spawn 4 Command Boxes
     static const char* boxNames[4] = {
         "oArtifact8Box1",
         "oArtifact8Box2",
         "oArtifact8Box3",
         "oArtifact8BoxUse"
     };
-    static const float boxOffsetsX[4] = { -110.0f, -75.0f, -40.0f, -5.0f };
 
     for (int i = 0; i < 4; i++) {
         runner->debug_box_ids[i] = -1;
         int32_t objIdx = shget(runner->assetsByName, boxNames[i]);
         if (objIdx >= 0 && (uint32_t)objIdx < runner->dataWin->objt.count) {
-            float spawnX = playerInst->x + boxOffsetsX[i];
-            float spawnY = playerInst->y;
+            float spawnX = boxPos[i][0];
+            float spawnY = boxPos[i][1];
             runner->debug_box_pos[i][0] = spawnX;
             runner->debug_box_pos[i][1] = spawnY;
             Instance* box = Runner_createInstance(runner, spawnX, spawnY, objIdx);
             if (box != nullptr) {
+                box->depth = -1000;
                 runner->debug_box_ids[i] = (int32_t)box->instanceId;
-                logInfo("Runner: Spawned command box %s (id %u) at (%.1f, %.1f)\n",
+                logInfo("Runner: Spawned command box %s (id %u) at safe spot (%.1f, %.1f)\n",
                         boxNames[i], box->instanceId, spawnX, spawnY);
             }
         } else {
@@ -4494,8 +4708,7 @@ void runner_spawn_debug_hub(Runner* runner, Instance* playerInst) {
         }
     }
 
-    // 4. Spawn 5 Boss Items to the right of the player
-    // Colossal Knurl, Ifrit's Horn, Imp Tentacle, Burning Witness, Nematocyst Nozzle
+    // Spawn 5 Boss Items
     static const char* bossNames[5] = {
         "oKnurl",
         "oHorn",
@@ -4503,20 +4716,20 @@ void runner_spawn_debug_hub(Runner* runner, Instance* playerInst) {
         "oWormEye",
         "oJellyBox"
     };
-    static const float bossOffsetsX[5] = { 40.0f, 75.0f, 110.0f, 145.0f, 180.0f };
 
     for (int i = 0; i < 5; i++) {
         runner->debug_boss_ids[i] = -1;
         int32_t objIdx = shget(runner->assetsByName, bossNames[i]);
         if (objIdx >= 0 && (uint32_t)objIdx < runner->dataWin->objt.count) {
-            float spawnX = playerInst->x + bossOffsetsX[i];
-            float spawnY = playerInst->y;
+            float spawnX = bossPos[i][0];
+            float spawnY = bossPos[i][1];
             runner->debug_boss_pos[i][0] = spawnX;
             runner->debug_boss_pos[i][1] = spawnY;
             Instance* bossItem = Runner_createInstance(runner, spawnX, spawnY, objIdx);
             if (bossItem != nullptr) {
+                bossItem->depth = -1000;
                 runner->debug_boss_ids[i] = (int32_t)bossItem->instanceId;
-                logInfo("Runner: Spawned boss item %s (id %u) at (%.1f, %.1f)\n",
+                logInfo("Runner: Spawned boss item %s (id %u) at safe spot (%.1f, %.1f)\n",
                         bossNames[i], bossItem->instanceId, spawnX, spawnY);
             }
         } else {
@@ -4594,6 +4807,7 @@ void runner_update_debug_mode(Runner* runner) {
                 float sy = runner->debug_box_pos[i][1];
                 Instance* newBox = Runner_createInstance(runner, sx, sy, objIdx);
                 if (newBox != nullptr) {
+                    newBox->depth = -1000;
                     runner->debug_box_ids[i] = (int32_t)newBox->instanceId;
                     logInfo("Runner: Re-spawned infinite command box %s at (%.1f, %.1f)\n",
                             boxNames[i], sx, sy);
@@ -4632,6 +4846,7 @@ void runner_update_debug_mode(Runner* runner) {
                 if (objIdx >= 0 && (uint32_t)objIdx < runner->dataWin->objt.count) {
                     Instance* newBossItem = Runner_createInstance(runner, sx, sy, objIdx);
                     if (newBossItem != nullptr) {
+                        newBossItem->depth = -1000;
                         runner->debug_boss_ids[i] = (int32_t)newBossItem->instanceId;
                         logInfo("Runner: Re-spawned boss item %s at (%.1f, %.1f)\n",
                                 bossNames[i], sx, sy);
