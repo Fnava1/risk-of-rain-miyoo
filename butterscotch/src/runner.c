@@ -4396,7 +4396,7 @@ void Runner_handlePendingRoomChange(Runner* runner) {
             runner->debug_test_active = false;
         }
 
-        if (runner->debug_test_active && (oldRoomIndex == 6 || oldRoomIndex == 40) && newRoomIndex >= 18) {
+        if (runner->debug_test_active && (oldRoomIndex == 6 || oldRoomIndex == 7 || oldRoomIndex == 40) && newRoomIndex >= 18) {
             logInfo("Runner: Debug Mode redirecting start stage from room %d to target stage %d\n",
                     newRoomIndex, runner->debug_target_stage);
             newRoomIndex = runner->debug_target_stage;

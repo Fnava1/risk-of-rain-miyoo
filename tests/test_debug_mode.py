@@ -34,7 +34,7 @@ class TestDebugMode(unittest.TestCase):
         self.assertIn("runner->debug_target_level = 1;", content)
 
         # Check room redirection in Runner_handlePendingRoomChange
-        self.assertIn("runner->debug_test_active && (oldRoomIndex == 6 || oldRoomIndex == 40)", content)
+        self.assertIn("runner->debug_test_active && (oldRoomIndex == 6 || oldRoomIndex == 7 || oldRoomIndex == 40)", content)
         self.assertIn("newRoomIndex = runner->debug_target_stage;", content)
 
         # Check hub spawn logic
@@ -68,8 +68,9 @@ class TestDebugMode(unittest.TestCase):
         self.assertIn("UES Contact Light (6)", content)
         self.assertIn("Boar Beach (Secret)", content)
 
-        # Room 39 detection
-        self.assertIn("runner->currentRoomIndex == 39", content)
+        # Room 7 (rSelectCoop) and Room 39 (rHost) detection
+        self.assertIn("runner->currentRoomIndex == 7 || runner->currentRoomIndex == 39", content)
+        self.assertIn('strcmp(runner->currentRoom->name, "rSelectCoop") == 0', content)
         self.assertIn('strcmp(runner->currentRoom->name, "rHost") == 0', content)
 
     def test_clean_room_byod_compliance(self):

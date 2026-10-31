@@ -1227,9 +1227,12 @@ static int s_debug_menu_row = 0; // 0 = Stage, 1 = Level, 2 = START, 3 = CANCEL
 
 static bool is_debug_room(Runner *runner) {
     if (!runner) return false;
-    if (runner->currentRoomIndex == 39) return true;
+    if (runner->currentRoomIndex == 7 || runner->currentRoomIndex == 39) return true;
     if (runner->currentRoom && runner->currentRoom->name) {
-        if (strcmp(runner->currentRoom->name, "rHost") == 0) return true;
+        if (strcmp(runner->currentRoom->name, "rSelectCoop") == 0 ||
+            strcmp(runner->currentRoom->name, "rHost") == 0) {
+            return true;
+        }
     }
     return false;
 }
@@ -1649,7 +1652,9 @@ bool platformHandleEvents(void) {
             g_runner->pendingRoom = menu_room;
         }
 
-        // Suppress inputs to background objects in rHost
+        // Suppress inputs and mouse to background objects in rSelectCoop / rHost
+        s_mouse_x = -100.0;
+        s_mouse_y = -100.0;
         if (g_runner->gamepads) {
             GamepadSlot *slot = &g_runner->gamepads->slots[0];
             slot->connected = true;
