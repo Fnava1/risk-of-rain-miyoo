@@ -14,6 +14,8 @@
 #include "vm.h"
 #include "stb_ds.h"
 #include "log.h"
+#include "utils.h"
+#include "net/net_discovery.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1003,6 +1005,70 @@ void *platformGetProcAddress(const char *name) {
     } \
 } while(0)
 
+static void mmp_check_network_autoconnect(Runner *runner) {
+    if (!runner || !runner->instancesByObject || !runner->dataWin) return;
+    static bool s_discovery_attempted = false;
+
+    static int32_t s_oHostClient_idx = -2;
+    if (s_oHostClient_idx == -2) {
+        s_oHostClient_idx = -1;
+        for (uint32_t i = 0; i < runner->dataWin->objt.count; i++) {
+            if (runner->dataWin->objt.objects[i].name &&
+                strcmp(runner->dataWin->objt.objects[i].name, "oHostClient") == 0) {
+                s_oHostClient_idx = (int32_t)i;
+                break;
+            }
+        }
+    }
+
+    if (s_oHostClient_idx >= 0 && s_oHostClient_idx < (int32_t)runner->dataWin->objt.count) {
+        Instance **list = runner->instancesByObject[s_oHostClient_idx];
+        if (list != NULL && arrlen(list) > 0) {
+            Instance *hostClientInst = list[0];
+            if (!s_discovery_attempted) {
+                s_discovery_attempted = true;
+                char host_ip[64] = "192.168.4.1";
+                int32_t host_port = 11100;
+
+                // 1. Try UDP auto-discovery beacon (150ms timeout)
+                bool found = net_discovery_find_host(host_ip, &host_port, 150);
+                if (!found) {
+                    // 2. Fall back to Prefs.ini [Network] host_ip
+                    FILE *f = fopen("Prefs.ini", "r");
+                    if (f) {
+                        char line[128];
+                        bool in_net = false;
+                        while (fgets(line, sizeof(line), f)) {
+                            if (strstr(line, "[Network]")) { in_net = true; continue; }
+                            if (in_net && line[0] == '[') break;
+                            if (in_net && strstr(line, "host_ip")) {
+                                char *eq = strchr(line, '=');
+                                if (eq) {
+                                    char *val = eq + 1;
+                                    while (*val == ' ' || *val == '\"') val++;
+                                    char *end = val + strlen(val) - 1;
+                                    while (end > val && (*end == '\n' || *end == '\r' || *end == ' ' || *end == '\"')) *end-- = '\0';
+                                    if (strlen(val) > 0) strncpy(host_ip, val, sizeof(host_ip) - 1);
+                                }
+                            }
+                        }
+                        fclose(f);
+                    }
+                }
+
+                // Inject IP into oHostClient instance
+                if (runner->vmContext) {
+                    RValue ipVal = RValue_makeOwnedString(safeStrdup(host_ip));
+                    VM_structSet(runner->vmContext, hostClientInst, "ip", ipVal, -1);
+                    VM_structSet(runner->vmContext, hostClientInst, "ip_address", ipVal, -1);
+                }
+            }
+        } else {
+            s_discovery_attempted = false;
+        }
+    }
+}
+
 bool platformHandleEvents(void) {
     bool exit_requested = false;
     struct input_event ev;
@@ -1229,6 +1295,7 @@ bool platformHandleEvents(void) {
         s_prev_state = s_curr_state;
     }
 
+    mmp_check_network_autoconnect(g_runner);
     return false;
 }
 
