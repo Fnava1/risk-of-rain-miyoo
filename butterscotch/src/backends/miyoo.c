@@ -1200,6 +1200,109 @@ static void mmp_osk_draw(uint16_t *fb, int tw, int th) {
 }
 
 
+typedef struct {
+    const char *name;
+    const char *room_name;
+    int32_t fallback_room_id;
+} DebugStageOption;
+
+static const DebugStageOption s_debug_stages[] = {
+    { "Desolate Forest (1-1)", "r1_1_1",    18 },
+    { "Dried Lake (1-2)",      "r1_2_1",    21 },
+    { "Damp Caverns (2-1)",    "r2_1_1",    24 },
+    { "Sky Meadow (2-2)",      "r2_2_1",    26 },
+    { "Ancient Valley (3-1)",  "r3_1_1",    28 },
+    { "Sunken Tombs (3-2)",    "r3_2_1",    31 },
+    { "Boar Beach (Secret)",   "rPigbeach", 30 },
+    { "Magma Barracks (4-1)",  "r4_1_1",    33 },
+    { "Hive Sanctuary (4-2)",  "r4_2_1",    35 },
+    { "Temple of Elders (5-1)","r5_1_1",    37 },
+    { "UES Contact Light (6)", "r6_1_1",    41 }
+};
+#define DEBUG_STAGE_COUNT (sizeof(s_debug_stages) / sizeof(s_debug_stages[0]))
+
+static int s_debug_stage_idx = 0;
+static int s_debug_level = 1;
+static int s_debug_menu_row = 0; // 0 = Stage, 1 = Level, 2 = START, 3 = CANCEL
+
+static bool is_debug_room(Runner *runner) {
+    if (!runner) return false;
+    if (runner->currentRoomIndex == 39) return true;
+    if (runner->currentRoom && runner->currentRoom->name) {
+        if (strcmp(runner->currentRoom->name, "rHost") == 0) return true;
+    }
+    return false;
+}
+
+static void mmp_debug_menu_draw(uint16_t *fb, int tw, int th) {
+    if (!fb) return;
+
+    int pw = 440;
+    int ph = 270;
+    int px = (tw - pw) / 2;
+    int py = (th - ph) / 2;
+
+    // 1. Dark backdrop panel and borders
+    draw_rect_fill(fb, tw, th, px, py, pw, ph, 0x10A2); // Semi-translucent dark navy
+    draw_rect_outline(fb, tw, th, px, py, pw, ph, 0x07FF); // Cyan border
+    draw_rect_outline(fb, tw, th, px + 2, py + 2, pw - 4, ph - 4, 0x0270);
+
+    // 2. Title and Subtitle
+    const char *title = "RISK OF RAIN - TEST & DEBUG HUB";
+    int t_len = (int)strlen(title);
+    font8x8_draw_string(fb, tw, th, px + (pw - t_len * 8) / 2, py + 12, title, 0xFFE0, 1); // Gold
+
+    const char *sub = "Configure Stage & Survivor Starting Level";
+    int s_len = (int)strlen(sub);
+    font8x8_draw_string(fb, tw, th, px + (pw - s_len * 8) / 2, py + 26, sub, 0x07FF, 1); // Cyan
+
+    // Divider line
+    draw_rect_fill(fb, tw, th, px + 15, py + 40, pw - 30, 1, 0x4A69);
+
+    // 3. Menu items
+    int row_w = 400;
+    int row_h = 28;
+    int row_x = px + (pw - row_w) / 2;
+    int start_y = py + 50;
+    int gap_y = 12;
+
+    for (int r = 0; r < 4; r++) {
+        int ry = start_y + r * (row_h + gap_y);
+        bool is_sel = (r == s_debug_menu_row);
+
+        if (is_sel) {
+            draw_rect_fill(fb, tw, th, row_x, ry, row_w, row_h, 0x07FF); // Cyan highlight
+            draw_rect_outline(fb, tw, th, row_x, ry, row_w, row_h, 0xFFFF); // White border
+        } else {
+            draw_rect_fill(fb, tw, th, row_x, ry, row_w, row_h, 0x2124); // Dark slate
+            draw_rect_outline(fb, tw, th, row_x, ry, row_w, row_h, 0x4A69);
+        }
+
+        uint16_t text_col = is_sel ? 0x0000 : 0xFFFF;
+        char line_buf[64];
+
+        if (r == 0) {
+            snprintf(line_buf, sizeof(line_buf), "< STAGE: %s >", s_debug_stages[s_debug_stage_idx].name);
+        } else if (r == 1) {
+            snprintf(line_buf, sizeof(line_buf), "< STARTING LEVEL: %2d  (L1/R1: +/-5) >", s_debug_level);
+        } else if (r == 2) {
+            snprintf(line_buf, sizeof(line_buf), "[ START TEST RUN (Press A / START) ]");
+        } else if (r == 3) {
+            snprintf(line_buf, sizeof(line_buf), "[ CANCEL / RETURN TO MENU (Press B) ]");
+        }
+
+        int text_len = (int)strlen(line_buf);
+        int tx = row_x + (row_w - text_len * 8) / 2;
+        int ty = ry + (row_h - 8) / 2;
+        font8x8_draw_string(fb, tw, th, tx, ty, line_buf, text_col, 1);
+    }
+
+    // 4. Instructions footer
+    const char *footer = "D-Pad: Navigate | L1/R1: Fast Level | A: Select | B: Back";
+    int f_len = (int)strlen(footer);
+    font8x8_draw_string(fb, tw, th, px + (pw - f_len * 8) / 2, py + 238, footer, 0xCE79, 1); // Soft silver
+}
+
 void platformSwapBuffers(void) {
     if (!g_runner || !g_runner->renderer) return;
     uint16_t *fb = SWRenderer_getFramebuffer(g_runner->renderer);
@@ -1210,6 +1313,10 @@ void platformSwapBuffers(void) {
 
     if (s_osk_active) {
         mmp_osk_draw(fb, tw, th);
+    }
+
+    if (is_debug_room(g_runner)) {
+        mmp_debug_menu_draw(fb, tw, th);
     }
 
     pthread_mutex_lock(&s_flip_mutex);
@@ -1460,6 +1567,100 @@ bool platformHandleEvents(void) {
     }
 
     mmp_check_network_autoconnect(g_runner);
+
+    if (is_debug_room(g_runner)) {
+        if (s_curr_state.up && !s_prev_state.up) {
+            s_debug_menu_row = (s_debug_menu_row + 3) % 4;
+        }
+        if (s_curr_state.down && !s_prev_state.down) {
+            s_debug_menu_row = (s_debug_menu_row + 1) % 4;
+        }
+        if (s_curr_state.left && !s_prev_state.left) {
+            if (s_debug_menu_row == 0) {
+                s_debug_stage_idx = (s_debug_stage_idx + (int)DEBUG_STAGE_COUNT - 1) % (int)DEBUG_STAGE_COUNT;
+            } else if (s_debug_menu_row == 1) {
+                if (s_debug_level > 1) s_debug_level--;
+            }
+        }
+        if (s_curr_state.right && !s_prev_state.right) {
+            if (s_debug_menu_row == 0) {
+                s_debug_stage_idx = (s_debug_stage_idx + 1) % (int)DEBUG_STAGE_COUNT;
+            } else if (s_debug_menu_row == 1) {
+                if (s_debug_level < 25) s_debug_level++;
+            }
+        }
+
+        // L1 / R1 for quick level stepping (+5 / -5)
+        if (s_curr_state.l1 && !s_prev_state.l1) {
+            s_debug_level = (s_debug_level > 5) ? (s_debug_level - 5) : 1;
+        }
+        if (s_curr_state.r1 && !s_prev_state.r1) {
+            s_debug_level = (s_debug_level <= 20) ? (s_debug_level + 5) : 25;
+        }
+
+        // Cycle selection on A if on stage or level row
+        if (s_curr_state.a && !s_prev_state.a) {
+            if (s_debug_menu_row == 0) {
+                s_debug_stage_idx = (s_debug_stage_idx + 1) % (int)DEBUG_STAGE_COUNT;
+            } else if (s_debug_menu_row == 1) {
+                s_debug_level = (s_debug_level < 25) ? (s_debug_level + 1) : 1;
+            }
+        }
+
+        // START or (A on START button) -> launch test run
+        bool start_pressed = (s_curr_state.start && !s_prev_state.start);
+        bool a_on_start = (s_curr_state.a && !s_prev_state.a && s_debug_menu_row == 2);
+        if (start_pressed || a_on_start) {
+            int32_t target_room = s_debug_stages[s_debug_stage_idx].fallback_room_id;
+            if (g_runner->assetsByName) {
+                int32_t dyn_id = shget(g_runner->assetsByName, s_debug_stages[s_debug_stage_idx].room_name);
+                if (dyn_id >= 0 && (uint32_t)dyn_id < g_runner->dataWin->room.count) {
+                    target_room = dyn_id;
+                }
+            }
+
+            logInfo("Miyoo: Debug Hub launching test run! Target stage=%d, Level=%d\n", target_room, s_debug_level);
+            g_runner->debug_test_active = true;
+            g_runner->debug_target_stage = target_room;
+            g_runner->debug_target_level = s_debug_level;
+            g_runner->debug_hub_spawned = false;
+
+            // Transition to rSelect (room 6) for character and artifact selection
+            int32_t select_room = 6;
+            if (g_runner->assetsByName) {
+                int32_t dyn_select = shget(g_runner->assetsByName, "rSelect");
+                if (dyn_select >= 0) select_room = dyn_select;
+            }
+            g_runner->pendingRoom = select_room;
+        }
+
+        // B or (A on CANCEL button) -> return to main menu
+        bool b_pressed = (s_curr_state.b && !s_prev_state.b);
+        bool a_on_cancel = (s_curr_state.a && !s_prev_state.a && s_debug_menu_row == 3);
+        if (b_pressed || a_on_cancel) {
+            logInfo("Miyoo: Debug Hub cancelled, returning to main menu\n");
+            g_runner->debug_test_active = false;
+            int32_t menu_room = 2; // rStart / rMenu
+            if (g_runner->assetsByName) {
+                int32_t dyn_menu = shget(g_runner->assetsByName, "rStart");
+                if (dyn_menu < 0) dyn_menu = shget(g_runner->assetsByName, "rMenu");
+                if (dyn_menu >= 0) menu_room = dyn_menu;
+            }
+            g_runner->pendingRoom = menu_room;
+        }
+
+        // Suppress inputs to background objects in rHost
+        if (g_runner->gamepads) {
+            GamepadSlot *slot = &g_runner->gamepads->slots[0];
+            slot->connected = true;
+            memset(slot->buttonDown, 0, sizeof(slot->buttonDown));
+            memset(slot->buttonPressed, 0, sizeof(slot->buttonPressed));
+            memset(slot->buttonReleased, 0, sizeof(slot->buttonReleased));
+        }
+
+        s_prev_state = s_curr_state;
+        return false;
+    }
 
     if (s_osk_active) {
         if (s_osk_just_opened) {

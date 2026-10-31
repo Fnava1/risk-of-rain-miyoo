@@ -2526,6 +2526,21 @@ void Runner_reset(Runner* runner) {
     runner->mathEpsilon = GML_MATH_EPSILON;
     runner->lastMusicInstance = -1;
 
+    runner->debug_test_active = false;
+    runner->debug_target_stage = 18;
+    runner->debug_target_level = 1;
+    runner->debug_hub_spawned = false;
+    for (int i = 0; i < 4; i++) {
+        runner->debug_box_ids[i] = -1;
+        runner->debug_box_pos[i][0] = 0.0f;
+        runner->debug_box_pos[i][1] = 0.0f;
+    }
+    for (int i = 0; i < 5; i++) {
+        runner->debug_boss_ids[i] = -1;
+        runner->debug_boss_pos[i][0] = 0.0f;
+        runner->debug_boss_pos[i][1] = 0.0f;
+    }
+
     arrsetlen(runner->cachedDrawables, 0);
     runner->drawableListStructureDirty = true;
     runner->drawableListSortDirty = false;
@@ -4377,6 +4392,19 @@ void Runner_handlePendingRoomChange(Runner* runner) {
         int32_t newRoomIndex = runner->pendingRoom;
         runner->pendingRoom = -1;
 
+        if (newRoomIndex <= 2 || newRoomIndex == 16) {
+            runner->debug_test_active = false;
+        }
+
+        if (runner->debug_test_active && (oldRoomIndex == 6 || oldRoomIndex == 40) && newRoomIndex >= 18) {
+            logInfo("Runner: Debug Mode redirecting start stage from room %d to target stage %d\n",
+                    newRoomIndex, runner->debug_target_stage);
+            newRoomIndex = runner->debug_target_stage;
+            runner->debug_hub_spawned = false;
+            for (int i = 0; i < 4; i++) runner->debug_box_ids[i] = -1;
+            for (int i = 0; i < 5; i++) runner->debug_boss_ids[i] = -1;
+        }
+
         // Fire Room End for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_END);
         if (runner->renderer && runner->renderer->vtable && runner->renderer->vtable->onRoomEnd) {
@@ -4405,6 +4433,212 @@ void Runner_handlePendingRoomChange(Runner* runner) {
 
         Runner_cleanupDestroyedInstances(runner);
         Runner_sweepDeadStructs(runner);
+    }
+}
+
+void runner_spawn_debug_hub(Runner* runner, Instance* playerInst) {
+    if (!runner || !playerInst || !runner->dataWin) return;
+
+    logInfo("Runner: Initializing Debug Test Hub for player at (%.1f, %.1f), target level %d\n",
+            playerInst->x, playerInst->y, runner->debug_target_level);
+
+    // 1. Level up player to target level
+    int targetLevel = runner->debug_target_level;
+    if (targetLevel > 1) {
+        logInfo("Runner: Scaling player from Level 1 to Level %d (%d level-ups)\n", targetLevel, targetLevel - 1);
+        for (int l = 1; l < targetLevel; l++) {
+            Runner_executeEvent(runner, playerInst, EVENT_OTHER, OTHER_USER0 + 5);
+        }
+    }
+
+    // 2. Refill player HP to maxhp
+    if (runner->vmContext != nullptr) {
+        ptrdiff_t slotMaxhp = shgeti(runner->vmContext->varNameMap, "maxhp");
+        ptrdiff_t slotHp = shgeti(runner->vmContext->varNameMap, "hp");
+        if (slotMaxhp >= 0 && slotHp >= 0) {
+            int32_t varIdMaxhp = runner->vmContext->varNameMap[slotMaxhp].value;
+            int32_t varIdHp = runner->vmContext->varNameMap[slotHp].value;
+            RValue maxhpVal = Instance_getSelfVar(playerInst, varIdMaxhp);
+            if (maxhpVal.type == RVALUE_REAL) {
+                Instance_setSelfVar(playerInst, varIdHp, maxhpVal);
+            }
+        }
+    }
+
+    // 3. Spawn 4 Command Boxes to the left of the player
+    // White/Common, Green/Uncommon, Red/Rare, Orange/Use
+    static const char* boxNames[4] = {
+        "oArtifact8Box1",
+        "oArtifact8Box2",
+        "oArtifact8Box3",
+        "oArtifact8BoxUse"
+    };
+    static const float boxOffsetsX[4] = { -110.0f, -75.0f, -40.0f, -5.0f };
+
+    for (int i = 0; i < 4; i++) {
+        runner->debug_box_ids[i] = -1;
+        int32_t objIdx = shget(runner->assetsByName, boxNames[i]);
+        if (objIdx >= 0 && (uint32_t)objIdx < runner->dataWin->objt.count) {
+            float spawnX = playerInst->x + boxOffsetsX[i];
+            float spawnY = playerInst->y;
+            runner->debug_box_pos[i][0] = spawnX;
+            runner->debug_box_pos[i][1] = spawnY;
+            Instance* box = Runner_createInstance(runner, spawnX, spawnY, objIdx);
+            if (box != nullptr) {
+                runner->debug_box_ids[i] = (int32_t)box->instanceId;
+                logInfo("Runner: Spawned command box %s (id %u) at (%.1f, %.1f)\n",
+                        boxNames[i], box->instanceId, spawnX, spawnY);
+            }
+        } else {
+            logWarn("Runner: Debug box object %s not found in data.win!\n", boxNames[i]);
+        }
+    }
+
+    // 4. Spawn 5 Boss Items to the right of the player
+    // Colossal Knurl, Ifrit's Horn, Imp Tentacle, Burning Witness, Nematocyst Nozzle
+    static const char* bossNames[5] = {
+        "oKnurl",
+        "oHorn",
+        "oImpTentacle",
+        "oWormEye",
+        "oJellyBox"
+    };
+    static const float bossOffsetsX[5] = { 40.0f, 75.0f, 110.0f, 145.0f, 180.0f };
+
+    for (int i = 0; i < 5; i++) {
+        runner->debug_boss_ids[i] = -1;
+        int32_t objIdx = shget(runner->assetsByName, bossNames[i]);
+        if (objIdx >= 0 && (uint32_t)objIdx < runner->dataWin->objt.count) {
+            float spawnX = playerInst->x + bossOffsetsX[i];
+            float spawnY = playerInst->y;
+            runner->debug_boss_pos[i][0] = spawnX;
+            runner->debug_boss_pos[i][1] = spawnY;
+            Instance* bossItem = Runner_createInstance(runner, spawnX, spawnY, objIdx);
+            if (bossItem != nullptr) {
+                runner->debug_boss_ids[i] = (int32_t)bossItem->instanceId;
+                logInfo("Runner: Spawned boss item %s (id %u) at (%.1f, %.1f)\n",
+                        bossNames[i], bossItem->instanceId, spawnX, spawnY);
+            }
+        } else {
+            logWarn("Runner: Boss item object %s not found in data.win!\n", bossNames[i]);
+        }
+    }
+
+    runner->debug_hub_spawned = true;
+}
+
+void runner_update_debug_mode(Runner* runner) {
+    if (!runner || !runner->debug_test_active || !runner->dataWin) return;
+
+    if (runner->currentRoom == nullptr || !isGameplayRoom(runner->currentRoom->name)) {
+        return;
+    }
+
+    int32_t opIndex = shget(runner->assetsByName, "oP");
+    if (opIndex < 0 || (uint32_t)opIndex >= runner->dataWin->objt.count) return;
+
+    Instance** playerList = runner->instancesByObject[opIndex];
+    if (playerList == nullptr || arrlen(playerList) == 0) return;
+    Instance* playerInst = playerList[0];
+    if (playerInst == nullptr || playerInst->destroyed) return;
+
+    // 1. Initial Hub Spawn if not yet spawned
+    if (!runner->debug_hub_spawned) {
+        runner_spawn_debug_hub(runner, playerInst);
+        return;
+    }
+
+    // 2. Hotkey Level Up (SELECT button or 'L' / VK_CONTROL / VK_F1 key)
+    bool levelUpPressed = false;
+    if (runner->gamepads && runner->gamepads->connectedCount > 0) {
+        if (runner->gamepads->slots[0].buttonPressed[8]) { // SELECT
+            levelUpPressed = true;
+        }
+    }
+    if (runner->keyboard != nullptr) {
+        if (RunnerKeyboard_checkPressed(runner->keyboard, VK_CONTROL) ||
+            RunnerKeyboard_checkPressed(runner->keyboard, VK_F1) ||
+            RunnerKeyboard_checkPressed(runner->keyboard, 'L')) {
+            levelUpPressed = true;
+        }
+    }
+
+    if (levelUpPressed) {
+        logInfo("Runner: Live hotkey triggered level-up on player!\n");
+        Runner_executeEvent(runner, playerInst, EVENT_OTHER, OTHER_USER0 + 5);
+    }
+
+    // 3. Command Box Re-spawner:
+    // If a box is opened, it destroys itself. We respawn a fresh box at the same coordinate.
+    static const char* boxNames[4] = {
+        "oArtifact8Box1",
+        "oArtifact8Box2",
+        "oArtifact8Box3",
+        "oArtifact8BoxUse"
+    };
+
+    for (int i = 0; i < 4; i++) {
+        int32_t boxInstId = runner->debug_box_ids[i];
+        bool boxExists = false;
+        if (boxInstId >= 0 && runner->instancesById != nullptr) {
+            Instance* existing = hmget(runner->instancesById, boxInstId);
+            if (existing != nullptr && !existing->destroyed) {
+                boxExists = true;
+            }
+        }
+
+        if (!boxExists) {
+            int32_t objIdx = shget(runner->assetsByName, boxNames[i]);
+            if (objIdx >= 0 && (uint32_t)objIdx < runner->dataWin->objt.count) {
+                float sx = runner->debug_box_pos[i][0];
+                float sy = runner->debug_box_pos[i][1];
+                Instance* newBox = Runner_createInstance(runner, sx, sy, objIdx);
+                if (newBox != nullptr) {
+                    runner->debug_box_ids[i] = (int32_t)newBox->instanceId;
+                    logInfo("Runner: Re-spawned infinite command box %s at (%.1f, %.1f)\n",
+                            boxNames[i], sx, sy);
+                }
+            }
+        }
+    }
+
+    // 4. Boss Item Re-spawner (respawn when picked up and player moves away > 48px)
+    static const char* bossNames[5] = {
+        "oKnurl",
+        "oHorn",
+        "oImpTentacle",
+        "oWormEye",
+        "oJellyBox"
+    };
+
+    for (int i = 0; i < 5; i++) {
+        int32_t bossInstId = runner->debug_boss_ids[i];
+        bool bossExists = false;
+        if (bossInstId >= 0 && runner->instancesById != nullptr) {
+            Instance* existing = hmget(runner->instancesById, bossInstId);
+            if (existing != nullptr && !existing->destroyed) {
+                bossExists = true;
+            }
+        }
+
+        if (!bossExists) {
+            float sx = runner->debug_boss_pos[i][0];
+            float sy = runner->debug_boss_pos[i][1];
+            float dx = playerInst->x - sx;
+            float dy = playerInst->y - sy;
+            float distSq = dx * dx + dy * dy;
+            if (distSq > (48.0f * 48.0f)) {
+                int32_t objIdx = shget(runner->assetsByName, bossNames[i]);
+                if (objIdx >= 0 && (uint32_t)objIdx < runner->dataWin->objt.count) {
+                    Instance* newBossItem = Runner_createInstance(runner, sx, sy, objIdx);
+                    if (newBossItem != nullptr) {
+                        runner->debug_boss_ids[i] = (int32_t)newBossItem->instanceId;
+                        logInfo("Runner: Re-spawned boss item %s at (%.1f, %.1f)\n",
+                                bossNames[i], sx, sy);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -5083,6 +5317,10 @@ void Runner_step(Runner* runner) {
 
     Runner_cleanupDestroyedInstances(runner);
     Runner_sweepDeadStructs(runner);
+
+    if (runner->debug_test_active) {
+        runner_update_debug_mode(runner);
+    }
 
     // Measure fps builtin
     if (nowNanos() - runner->fpsWindowStartNanos >= (uint64_t)1000000000) {

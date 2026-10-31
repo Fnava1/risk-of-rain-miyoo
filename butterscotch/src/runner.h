@@ -940,7 +940,20 @@ struct Runner {
     uint64_t gameStartTime;
 
     Random random;
+
+    // Debug Mode & In-Game Test Hub state
+    bool debug_test_active;
+    int32_t debug_target_stage;
+    int32_t debug_target_level;
+    bool debug_hub_spawned;
+    int32_t debug_box_ids[4];
+    float debug_box_pos[4][2];
+    int32_t debug_boss_ids[5];
+    float debug_boss_pos[5][2];
 };
+
+void runner_spawn_debug_hub(Runner* runner, Instance* playerInst);
+void runner_update_debug_mode(Runner* runner);
 
 const char* Runner_getEventName(int32_t eventType, int32_t eventSubtype);
 void Runner_reset(Runner* runner);
