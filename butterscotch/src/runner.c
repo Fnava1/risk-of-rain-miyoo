@@ -4378,6 +4378,9 @@ void Runner_handlePendingRoomChange(Runner* runner) {
 
         // Fire Room End for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_END);
+        if (runner->renderer && runner->renderer->vtable && runner->renderer->vtable->onRoomEnd) {
+            runner->renderer->vtable->onRoomEnd(runner->renderer, oldRoomIndex);
+        }
         require(runner->dataWin->room.count > (uint32_t) newRoomIndex);
         const char* newRoomName = runner->dataWin->room.rooms[newRoomIndex].name;
 

@@ -5,6 +5,10 @@
 #include <string.h>
 #include "stb_ds.h"
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+
 // ===[ SDL audio callback ]===\r
 // Scratch buffer for float->S16 conversion. One static is fine: SDL serialises
 // callbacks for the single device we open.
@@ -38,12 +42,40 @@ static void sdlAudioCallback(void* userdata, Uint8* stream, int len) {
                    (size_t) (chunk - (int) framesRead) * 2 * sizeof(float));
         }
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+        int i = 0;
+        int n = chunk * channels;
+        float32x4_t v_one = vdupq_n_f32(1.0f);
+        float32x4_t v_neg_one = vdupq_n_f32(-1.0f);
+        float32x4_t v_scale = vdupq_n_f32(32767.0f);
+
+        for (; i <= n - 8; i += 8) {
+            float32x4_t s0 = vld1q_f32(&sdlMixScratch[i]);
+            float32x4_t s1 = vld1q_f32(&sdlMixScratch[i + 4]);
+
+            s0 = vminq_f32(vmaxq_f32(s0, v_neg_one), v_one);
+            s1 = vminq_f32(vmaxq_f32(s1, v_neg_one), v_one);
+
+            int32x4_t i0 = vcvtq_s32_f32(vmulq_f32(s0, v_scale));
+            int32x4_t i1 = vcvtq_s32_f32(vmulq_f32(s1, v_scale));
+
+            int16x8_t res = vcombine_s16(vqmovn_s32(i0), vqmovn_s32(i1));
+            vst1q_s16(&out[i], res);
+        }
+        for (; i < n; i++) {
+            float s = sdlMixScratch[i];
+            if      (s >  1.0f) s =  1.0f;
+            else if (s < -1.0f) s = -1.0f;
+            out[i] = (int16_t) (s * 32767.0f);
+        }
+#else
         for (int i = 0, n = chunk * channels; i < n; i++) {
             float s = sdlMixScratch[i];
             if      (s >  1.0f) s =  1.0f;
             else if (s < -1.0f) s = -1.0f;
             out[i] = (int16_t) (s * 32767.0f);
         }
+#endif
 
         out += chunk * channels;
         framesLeft -= chunk;

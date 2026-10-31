@@ -243,6 +243,7 @@ typedef struct {
     // Unlit 3D state. State changes flush previously submitted geometry.
     void (*setDepthState)(Renderer* renderer, bool test, bool write, bool cull);
     void (*clearDepth)(Renderer* renderer, float depth);
+    void (*onRoomEnd)(Renderer* renderer, int32_t oldRoomIndex);
 } RendererVtable;
 
 // ===[ Renderer Base Struct ]===

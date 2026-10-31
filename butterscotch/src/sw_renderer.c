@@ -59,30 +59,33 @@ static inline uint16_t blend_pixel_rgb565(uint16_t d, uint16_t s, uint8_t alpha)
     uint32_t a = (uint32_t)alpha + 1;
     uint32_t inv_a = 256 - a;
 
-    uint32_t s_r = (s >> 11) & 0x1F;
-    uint32_t s_g = (s >> 5) & 0x3F;
-    uint32_t s_b = s & 0x1F;
+    // SWAR: Process Red and Blue unpacked in single 32-bit register without crosstalk
+    uint32_t s_rb = (s & 0x001F) | (((uint32_t)(s & 0xF800)) << 5);
+    uint32_t d_rb = (d & 0x001F) | (((uint32_t)(d & 0xF800)) << 5);
+    uint32_t rb = (s_rb * a + d_rb * inv_a) >> 8;
+    uint32_t res_b = rb & 0x001F;
+    uint32_t res_r = (rb >> 5) & 0xF800;
 
-    uint32_t d_r = (d >> 11) & 0x1F;
-    uint32_t d_g = (d >> 5) & 0x3F;
-    uint32_t d_b = d & 0x1F;
+    uint32_t s_g = s & 0x07E0;
+    uint32_t d_g = d & 0x07E0;
+    uint32_t res_g = ((s_g * a + d_g * inv_a) >> 8) & 0x07E0;
 
-    uint32_t r = (s_r * a + d_r * inv_a) >> 8;
-    uint32_t g = (s_g * a + d_g * inv_a) >> 8;
-    uint32_t b = (s_b * a + d_b * inv_a) >> 8;
-
-    return (uint16_t)((r << 11) | (g << 5) | b);
+    return (uint16_t)(res_r | res_g | res_b);
 }
 
 static inline uint16_t blend_pixel_rgb565_add(uint16_t d, uint16_t s, uint8_t alpha) {
     if (alpha == 0) return d;
     uint32_t a = (uint32_t)alpha + 1;
-    uint32_t s_r = (((s >> 11) & 0x1F) * a) >> 8;
-    uint32_t s_g = (((s >> 5) & 0x3F) * a) >> 8;
-    uint32_t s_b = ((s & 0x1F) * a) >> 8;
+
+    uint32_t s_rb = (s & 0x001F) | (((uint32_t)(s & 0xF800)) << 5);
+    uint32_t s_g = s & 0x07E0;
+    uint32_t scaled_rb = (s_rb * a) >> 8;
+    uint32_t s_b = scaled_rb & 0x001F;
+    uint32_t s_r = (scaled_rb >> 16) & 0x001F;
+    uint32_t s_g_scaled = ((s_g * a) >> 8) >> 5;
 
     uint32_t r = ((d >> 11) & 0x1F) + s_r;
-    uint32_t g = ((d >> 5) & 0x3F) + s_g;
+    uint32_t g = ((d >> 5) & 0x3F) + s_g_scaled;
     uint32_t b = (d & 0x1F) + s_b;
 
     if (r > 31) r = 31;
@@ -105,6 +108,8 @@ typedef struct {
     int32_t  width;
     int32_t  height;
     bool     loaded;
+    bool     isProtected;
+    int32_t  lastUsedRoom;
 } SWTexturePage;
 
 typedef struct {
@@ -231,7 +236,10 @@ void SWRenderer_clearFrameBuffer(Renderer* renderer, uint32_t color) {
 // ===[ Texture Loading ]===
 
 static bool ensureTextureLoaded(SWRenderer *sw, uint32_t pageId) {
-    if (pageId < sw->pageCount && sw->pages[pageId].loaded) return true;
+    if (pageId < sw->pageCount && sw->pages[pageId].loaded) {
+        sw->pages[pageId].lastUsedRoom = sw->base.runner ? sw->base.runner->currentRoomIndex : 0;
+        return true;
+    }
     DataWin *dw = sw->base.dataWin;
     if (!dw || pageId >= dw->txtr.count) return false;
 
@@ -280,6 +288,7 @@ static bool ensureTextureLoaded(SWRenderer *sw, uint32_t pageId) {
     }
 
     p->loaded = true;
+    p->lastUsedRoom = sw->base.runner ? sw->base.runner->currentRoomIndex : 0;
     logInfo("SWRenderer: Loaded TXTR page %u (%dx%d, %zu KB)\n", pageId, w, h, ((size_t)w * h * 3) / 1024);
     return true;
 }
@@ -1931,6 +1940,90 @@ static void swDeleteBackground(Renderer *renderer, int32_t bgIndex) {
     bg->tpagIndex = -1;
     logInfo("SWRenderer: Deleted background %d\n", bgIndex);
 }
+
+static void SWRenderer_protectCorePages(SWRenderer *sw) {
+    DataWin *dw = sw->base.dataWin;
+    if (!dw) return;
+
+    for (uint32_t i = 0; i < dw->font.count; i++) {
+        Font *f = &dw->font.fonts[i];
+        if (f->tpagIndex >= 0 && (uint32_t)f->tpagIndex < dw->tpag.count) {
+            int16_t pageId = dw->tpag.items[f->tpagIndex].texturePageId;
+            if (pageId >= 0 && (uint32_t)pageId < sw->pageCount) {
+                sw->pages[pageId].isProtected = true;
+            }
+        }
+        if (f->spriteIndex >= 0 && (uint32_t)f->spriteIndex < dw->sprt.count) {
+            Sprite *spr = &dw->sprt.sprites[f->spriteIndex];
+            if (spr->tpagIndices) {
+                for (uint32_t fi = 0; fi < spr->textureCount; fi++) {
+                    int32_t ti = spr->tpagIndices[fi];
+                    if (ti >= 0 && (uint32_t)ti < dw->tpag.count) {
+                        int16_t pageId = dw->tpag.items[ti].texturePageId;
+                        if (pageId >= 0 && (uint32_t)pageId < sw->pageCount) {
+                            sw->pages[pageId].isProtected = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (uint32_t i = 0; i < dw->sprt.count; i++) {
+        Sprite *spr = &dw->sprt.sprites[i];
+        if (!spr->name || !spr->tpagIndices) continue;
+        const char *n = spr->name;
+        if (strstr(n, "HUD") || strstr(n, "Menu") || strstr(n, "Button") ||
+            strstr(n, "Artifact") || strstr(n, "Cursor") || strstr(n, "Title") ||
+            strstr(n, "Command") || strstr(n, "Select") || strstr(n, "fnt") ||
+            strstr(n, "Font") || strstr(n, "Difficulty")) {
+            for (uint32_t fi = 0; fi < spr->textureCount; fi++) {
+                int32_t ti = spr->tpagIndices[fi];
+                if (ti >= 0 && (uint32_t)ti < dw->tpag.count) {
+                    int16_t pageId = dw->tpag.items[ti].texturePageId;
+                    if (pageId >= 0 && (uint32_t)pageId < sw->pageCount) {
+                        sw->pages[pageId].isProtected = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void swOnRoomEnd(Renderer *renderer, int32_t oldRoomIndex) {
+    if (!renderer) return;
+    SWRenderer *sw = (SWRenderer *)renderer;
+    if (!sw->pages || sw->pageCount == 0) return;
+
+    uint32_t loadedCount = 0;
+    for (uint32_t i = 0; i < sw->pageCount; i++) {
+        if (sw->pages[i].loaded) loadedCount++;
+    }
+
+    if (loadedCount <= 6) return;
+
+    SWRenderer_protectCorePages(sw);
+
+    uint32_t purged = 0;
+    for (uint32_t i = 0; i < sw->pageCount; i++) {
+        SWTexturePage *p = &sw->pages[i];
+        if (p->loaded && !p->isProtected && p->lastUsedRoom < oldRoomIndex) {
+            free(p->rgb);
+            p->rgb = NULL;
+            free(p->alpha);
+            p->alpha = NULL;
+            p->width = 0;
+            p->height = 0;
+            p->loaded = false;
+            purged++;
+            loadedCount--;
+            if (loadedCount <= 6) break;
+        }
+    }
+    if (purged > 0) {
+        logInfo("SWRenderer: Purged %u stale texture pages on Room End (active: %u)\n", purged, loadedCount);
+    }
+}
 static BlendFactors swGpuGetBlendFactors(Renderer *renderer) { return ((SWRenderer *)renderer)->blendFactors; }
 static int32_t swGpuGetBlendMode(Renderer *renderer) { return ((SWRenderer *)renderer)->blendMode; }
 static void swGpuSetBlendMode(Renderer *renderer, int32_t mode) { ((SWRenderer *)renderer)->blendMode = mode; }
@@ -2232,6 +2325,7 @@ Renderer* SWRenderer_create(void) {
     swVtable.shaderIsCompiled = swShaderIsCompiled;
     swVtable.shadersSupported = swShadersSupported;
     swVtable.setMatrix = swSetMatrix;
+    swVtable.onRoomEnd = swOnRoomEnd;
 
     sw->base.drawColor = 0xFFFFFF;
     sw->base.drawAlpha = 1.0f;
