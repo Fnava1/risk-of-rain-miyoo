@@ -49,6 +49,10 @@ def test_miyoo_autoconnect_sets_global_client_ip_and_port():
     assert "globalScopeInstance" in content, "Missing globalScopeInstance check in miyoo.c"
     assert '"client_ip"' in content, "Missing 'client_ip' variable assignment in miyoo.c"
     assert '"client_port"' in content, "Missing 'client_port' variable assignment in miyoo.c"
+    # Ensure mmp_check_network_autoconnect uses Instance_setSelfVar, NOT VM_structSet (which asserts STRUCT_OBJECT_INDEX)
+    fn_body = content.split("static void mmp_check_network_autoconnect")[1].split("bool platformHandleEvents")[0]
+    assert "VM_structSet" not in fn_body, "mmp_check_network_autoconnect must not call VM_structSet (crashes on non-struct instances)"
+    assert "Instance_setSelfVar" in content, "mmp_set_instance_var must use Instance_setSelfVar"
 
 def test_net_discovery_armv7_cross_compilation():
     """Verify net_discovery.c compiles cleanly with ARMv7 toolchain in Docker."""

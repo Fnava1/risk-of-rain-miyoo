@@ -1005,6 +1005,12 @@ void *platformGetProcAddress(const char *name) {
     } \
 } while(0)
 
+static void mmp_set_instance_var(VMContext* ctx, Instance* inst, const char* name, RValue val) {
+    if (!ctx || !inst) return;
+    int32_t varId = VM_getOrAllocateVarID(ctx, name);
+    Instance_setSelfVar(inst, varId, val);
+}
+
 static void mmp_check_network_autoconnect(Runner *runner) {
     if (!runner || !runner->instancesByObject || !runner->dataWin) return;
     static bool s_discovery_attempted = false;
@@ -1033,7 +1039,7 @@ static void mmp_check_network_autoconnect(Runner *runner) {
                 // 1. Try UDP auto-discovery beacon (0ms non-blocking poll)
                 bool found = net_discovery_find_host(host_ip, &host_port, 0);
                 if (!found) {
-                    // 2. Fall back to Prefs.ini [Network] host_ip and port
+                    // 2. Fall back to Prefs.ini [Network] host_ip/client_ip and port/client_port
                     FILE *f = fopen("Prefs.ini", "r");
                     if (f) {
                         char line[128];
@@ -1041,7 +1047,7 @@ static void mmp_check_network_autoconnect(Runner *runner) {
                         while (fgets(line, sizeof(line), f)) {
                             if (strstr(line, "[Network]")) { in_net = true; continue; }
                             if (in_net && line[0] == '[') break;
-                            if (in_net && strstr(line, "host_ip")) {
+                            if (in_net && (strstr(line, "host_ip") || strstr(line, "client_ip"))) {
                                 char *eq = strchr(line, '=');
                                 if (eq) {
                                     char *val = eq + 1;
@@ -1051,7 +1057,7 @@ static void mmp_check_network_autoconnect(Runner *runner) {
                                     if (strlen(val) > 0) strncpy(host_ip, val, sizeof(host_ip) - 1);
                                 }
                             }
-                            if (in_net && strstr(line, "port")) {
+                            if (in_net && (strstr(line, "port") || strstr(line, "client_port"))) {
                                 char *eq = strchr(line, '=');
                                 if (eq) {
                                     int p = atoi(eq + 1);
@@ -1065,15 +1071,14 @@ static void mmp_check_network_autoconnect(Runner *runner) {
 
                 // Inject IP & port into global scope (global.client_ip / global.client_port) and instance
                 if (runner->vmContext && runner->vmContext->globalScopeInstance) {
-                    RValue gIpVal = RValue_makeOwnedString(safeStrdup(host_ip));
-                    VM_structSet(runner->vmContext, runner->vmContext->globalScopeInstance, "client_ip", gIpVal, -1);
-                    VM_structSet(runner->vmContext, runner->vmContext->globalScopeInstance, "client_port", RValue_makeReal((GMLReal)host_port), -1);
+                    mmp_set_instance_var(runner->vmContext, runner->vmContext->globalScopeInstance, "client_ip", RValue_makeString(host_ip));
+                    mmp_set_instance_var(runner->vmContext, runner->vmContext->globalScopeInstance, "client_port", RValue_makeReal((GMLReal)host_port));
                 }
-                if (runner->vmContext) {
-                    RValue ipVal = RValue_makeOwnedString(safeStrdup(host_ip));
-                    VM_structSet(runner->vmContext, hostClientInst, "client_ip", ipVal, -1);
-                    VM_structSet(runner->vmContext, hostClientInst, "ip", ipVal, -1);
-                    VM_structSet(runner->vmContext, hostClientInst, "ip_address", ipVal, -1);
+                if (runner->vmContext && hostClientInst) {
+                    mmp_set_instance_var(runner->vmContext, hostClientInst, "client_ip", RValue_makeString(host_ip));
+                    mmp_set_instance_var(runner->vmContext, hostClientInst, "client_port", RValue_makeReal((GMLReal)host_port));
+                    mmp_set_instance_var(runner->vmContext, hostClientInst, "ip", RValue_makeString(host_ip));
+                    mmp_set_instance_var(runner->vmContext, hostClientInst, "ip_address", RValue_makeString(host_ip));
                 }
             }
         } else {
