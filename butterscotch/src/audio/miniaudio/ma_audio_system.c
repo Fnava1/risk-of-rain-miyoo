@@ -44,6 +44,8 @@
 
 // ===[ Helpers ]===
 
+static void maSeekInstance(SoundInstance* inst, float positionSeconds);
+
 static SoundInstance* findFreeSlot(MaAudioSystem* ma) {
     // First pass: find an inactive slot
     repeat(MAX_SOUND_INSTANCES, i) {
@@ -263,6 +265,40 @@ static int32_t maPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t prior
             return -1;
         }
         sound = &dw->sond.sounds[soundIndex];
+    }
+
+    if (!loop && !isStream) {
+        // Voice limiting / polyphony cap:
+        // Cap concurrent playing instances of the exact same sound effect to 4.
+        // During Spite chain reactions or mob cascades, dozens of grenades/enemies detonate simultaneously.
+        // Stealing the oldest active voice avoids exhausting sound slots and CPU mixer saturation,
+        // while returning a valid instance ID keeps GML audio_sound_gain / audio_sound_pitch calls safe.
+        int32_t activeForThisSound = 0;
+        SoundInstance* oldestMatching = nullptr;
+        repeat(MAX_SOUND_INSTANCES, i) {
+            SoundInstance* inst = &ma->instances[i];
+            if (inst->active && inst->soundIndex == soundIndex && !ma_sound_at_end(&inst->maSound)) {
+                activeForThisSound++;
+                if (oldestMatching == nullptr) {
+                    oldestMatching = inst;
+                }
+            }
+        }
+        if (activeForThisSound >= 4 && oldestMatching != nullptr) {
+            float volume = sound ? sound->volume : streamGain;
+            float pitch = sound ? sound->pitch : streamPitch;
+            ma_sound_set_volume(&oldestMatching->maSound, volume * AudioSystem_soundGroupGain(audio, soundIndex));
+            ma_sound_set_pitch(&oldestMatching->maSound, pitch);
+            oldestMatching->currentGain = volume;
+            oldestMatching->targetGain = volume;
+            oldestMatching->startGain = volume;
+            oldestMatching->fadeTimeRemaining = 0.0f;
+            oldestMatching->fadeTotalTime = 0.0f;
+            oldestMatching->priority = priority;
+            maSeekInstance(oldestMatching, 0.0f);
+            ma_sound_start(&oldestMatching->maSound);
+            return oldestMatching->instanceId;
+        }
     }
 
     SoundInstance* slot = findFreeSlot(ma);

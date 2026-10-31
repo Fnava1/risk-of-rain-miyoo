@@ -1046,6 +1046,26 @@ static void drawInstanceNormally(Runner* runner, Instance* inst) {
         int32_t ownerObjectIndex = -1;
         int32_t codeId = findEventCodeIdAndOwner(runner, inst->objectIndex, EVENT_DRAW, DRAW_NORMAL, &ownerObjectIndex);
         if (codeId >= 0) {
+            // Viewport frustum culling for oExplosion (object 172):
+            // oExplosion has a custom Draw script containing only draw_sprite_ext calls (purely visual, zero gameplay side-effects).
+            // During Spite chain reactions or intense mob crowds, dozens of explosions occur off-screen.
+            // Culling them here prevents massive software rasterizer fillrate saturation.
+            if (runner->explosionObjIndex >= 0 && inst->objectIndex == runner->explosionObjIndex &&
+                runner->activeViewValid && !runner->inGuiPass && !isNonGameplayRoom(runner->currentRoom)) {
+                float margin = 96.0f;
+                float absScaleX = fabsf(inst->imageXscale);
+                float absScaleY = fabsf(inst->imageYscale);
+                float maxScale = (absScaleX > absScaleY) ? absScaleX : absScaleY;
+                if (maxScale > 1.0f) margin *= maxScale;
+                if (inst->x < runner->activeViewX - margin || inst->x > runner->activeViewX + runner->activeViewW + margin ||
+                    inst->y < runner->activeViewY - margin || inst->y > runner->activeViewY + runner->activeViewH + margin) {
+                    if (repositionedArtifact8) {
+                        inst->x = origX;
+                        inst->y = origY;
+                    }
+                    return;
+                }
+            }
             Runner_executeResolvedEvent(runner, inst, EVENT_DRAW, DRAW_NORMAL, codeId, ownerObjectIndex);
         } else if (runner->renderer != nullptr) {
             // View Frustum Culling for instances without custom draw scripts:
@@ -2723,10 +2743,14 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
     runner->audioSystem = audioSystem;
     runner->frameCount = 0;
     runner->damageObjIndex = -1;
+    runner->explosionObjIndex = -1;
     repeat(dataWin->objt.count, oi) {
-        if (dataWin->objt.objects[oi].name && strcmp(dataWin->objt.objects[oi].name, "oEfDamage") == 0) {
-            runner->damageObjIndex = (int32_t)oi;
-            break;
+        if (dataWin->objt.objects[oi].name) {
+            if (strcmp(dataWin->objt.objects[oi].name, "oEfDamage") == 0) {
+                runner->damageObjIndex = (int32_t)oi;
+            } else if (strcmp(dataWin->objt.objects[oi].name, "oExplosion") == 0) {
+                runner->explosionObjIndex = (int32_t)oi;
+            }
         }
     }
     runner->gameSpeedOverride = 0.0;
