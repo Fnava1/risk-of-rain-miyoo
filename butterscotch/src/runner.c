@@ -1124,7 +1124,11 @@ static void drawInstanceNormally(Runner* runner, Instance* inst) {
             // oExplosion has a custom Draw script containing only draw_sprite_ext calls (purely visual, zero gameplay side-effects).
             // During Spite chain reactions or intense mob crowds, dozens of explosions occur off-screen.
             // Culling them here prevents massive software rasterizer fillrate saturation.
-            if (runner->explosionObjIndex >= 0 && inst->objectIndex == runner->explosionObjIndex &&
+            bool isCullableEffect = (runner->isVisualEffectObject != nullptr &&
+                                     inst->objectIndex >= 0 &&
+                                     (uint32_t)inst->objectIndex < runner->dataWin->objt.count &&
+                                     runner->isVisualEffectObject[inst->objectIndex]);
+            if (isCullableEffect &&
                 runner->activeViewValid && !runner->inGuiPass && !isNonGameplayRoom(runner->currentRoom)) {
                 float margin = 96.0f;
                 float absScaleX = fabsf(inst->imageXscale);
@@ -2796,16 +2800,42 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
     runner->explosionObjIndex = -1;
     runner->efTrailObjIndex = -1;
     runner->guardBulletObjIndex = -1;
+    runner->isVisualEffectObject = (bool*) safeCalloc(dataWin->objt.count, sizeof(bool));
     repeat(dataWin->objt.count, oi) {
         if (dataWin->objt.objects[oi].name) {
-            if (strcmp(dataWin->objt.objects[oi].name, "oEfDamage") == 0) {
+            const char* oname = dataWin->objt.objects[oi].name;
+            if (strcmp(oname, "oEfDamage") == 0) {
                 runner->damageObjIndex = (int32_t)oi;
-            } else if (strcmp(dataWin->objt.objects[oi].name, "oExplosion") == 0) {
+                runner->isVisualEffectObject[oi] = true;
+            } else if (strcmp(oname, "oExplosion") == 0) {
                 runner->explosionObjIndex = (int32_t)oi;
-            } else if (strcmp(dataWin->objt.objects[oi].name, "oEfTrail") == 0) {
+                runner->isVisualEffectObject[oi] = true;
+            } else if (strcmp(oname, "oEfTrail") == 0) {
                 runner->efTrailObjIndex = (int32_t)oi;
-            } else if (strcmp(dataWin->objt.objects[oi].name, "oGuardBullet") == 0) {
+                runner->isVisualEffectObject[oi] = true;
+            } else if (strcmp(oname, "oGuardBullet") == 0) {
                 runner->guardBulletObjIndex = (int32_t)oi;
+            } else if (strcmp(oname, "oEfGold") == 0 ||
+                       strcmp(oname, "oEfExp") == 0 ||
+                       strcmp(oname, "oEfNugget") == 0 ||
+                       strcmp(oname, "oEfFirework") == 0 ||
+                       strcmp(oname, "oEfFireworkDust") == 0 ||
+                       strcmp(oname, "oEfChain") == 0 ||
+                       strcmp(oname, "oEfLaser") == 0 ||
+                       strcmp(oname, "oEfLaserLine") == 0 ||
+                       strcmp(oname, "oEfRay") == 0 ||
+                       strcmp(oname, "oEfRayFront") == 0 ||
+                       strcmp(oname, "oEfFlash") == 0 ||
+                       strcmp(oname, "oEfCircle") == 0 ||
+                       strcmp(oname, "oEfDodge") == 0 ||
+                       strcmp(oname, "oEfOutline") == 0 ||
+                       strcmp(oname, "oEfSparks") == 0 ||
+                       strcmp(oname, "oEfDust1") == 0 ||
+                       strcmp(oname, "oEfDust2") == 0 ||
+                       strcmp(oname, "oMushDust") == 0 ||
+                       strcmp(oname, "oBlood") == 0 ||
+                       strcmp(oname, "oBloodDecal") == 0) {
+                runner->isVisualEffectObject[oi] = true;
             }
         }
     }
@@ -6069,6 +6099,11 @@ void Runner_free(Runner* runner) {
         }
         free(runner->instancesByExactObject);
         runner->instancesByExactObject = nullptr;
+    }
+
+    if (runner->isVisualEffectObject != nullptr) {
+        free(runner->isVisualEffectObject);
+        runner->isVisualEffectObject = nullptr;
     }
 
     {

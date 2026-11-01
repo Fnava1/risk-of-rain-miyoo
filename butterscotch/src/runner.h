@@ -741,6 +741,7 @@ struct Runner {
     int32_t explosionObjIndex;
     int32_t efTrailObjIndex;
     int32_t guardBulletObjIndex;
+    bool* isVisualEffectObject;
     float handheldScale;
     uint32_t nextInstanceId;
     RunnerKeyboardState* keyboard;
