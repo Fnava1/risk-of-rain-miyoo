@@ -883,7 +883,11 @@ RValue VMBuiltins_getVariable(VMContext* ctx, Instance* inst, int16_t builtinVar
             return RValue_makeReal(inst->gravityDirection);
         case BUILTIN_VAR_ALARM: {
             if (inst == nullptr) break;
-            if (isValidAlarmIndex(arrayIndex)) return RValue_makeReal((GMLReal) inst->alarm[arrayIndex]);
+            if (isValidAlarmIndex(arrayIndex)) {
+                int32_t a = inst->alarm[arrayIndex];
+                if (a <= 0) return RValue_makeReal(-1.0);
+                return RValue_makeReal((GMLReal) a);
+            }
             return RValue_makeReal(-1.0);
         }
 
@@ -15693,7 +15697,9 @@ static RValue builtin_alarm_get(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE
 
     if (ctx->currentInstance != nullptr) {
         Instance* inst = ctx->currentInstance;
-        return RValue_makeReal((GMLReal) inst->alarm[alarmIndex]);
+        int32_t a = inst->alarm[alarmIndex];
+        if (a <= 0) return RValue_makeReal(-1.0);
+        return RValue_makeReal((GMLReal) a);
     }
 
     return RValue_makeReal(-1);

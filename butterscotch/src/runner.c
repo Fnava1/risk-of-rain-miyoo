@@ -5355,7 +5355,7 @@ void Runner_step(Runner* runner) {
 #endif
 
                 inst->alarm[alarmIdx]--;
-                if (inst->alarm[alarmIdx] == 0) {
+                if (inst->alarm[alarmIdx] <= 0) {
                     inst->alarm[alarmIdx] = -1;
                     inst->activeAlarmMask &= (uint16_t) ~bit;
 
