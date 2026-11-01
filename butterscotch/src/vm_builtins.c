@@ -10786,14 +10786,34 @@ static void moveContactCommon(Runner* runner, Instance* inst, GMLReal dir, GMLRe
     }
     float origX = inst->x;
     float origY = inst->y;
-    for (int32_t i = 1; steps >= i; i++) {
-        GMLReal nx = inst->x + dx;
-        GMLReal ny = inst->y + dy;
-        if (!bounceTestFree(runner, inst, nx, ny, useall)) {
-            break;
+    int32_t coarse = 8;
+    int32_t i = 1;
+    while (i <= steps) {
+        int32_t nextI = i + coarse - 1;
+        if (nextI > steps) nextI = steps;
+
+        if (nextI > i) {
+            GMLReal testX = (GMLReal) origX + dx * (GMLReal) nextI;
+            GMLReal testY = (GMLReal) origY + dy * (GMLReal) nextI;
+            if (bounceTestFree(runner, inst, testX, testY, useall)) {
+                inst->x = (float) testX;
+                inst->y = (float) testY;
+                i = nextI + 1;
+                continue;
+            }
         }
-        inst->x = (float) nx;
-        inst->y = (float) ny;
+
+        // Collision encountered in coarse window [i, nextI], refine with 1-pixel steps
+        for (; i <= steps; i++) {
+            GMLReal nx = (GMLReal) origX + dx * (GMLReal) i;
+            GMLReal ny = (GMLReal) origY + dy * (GMLReal) i;
+            if (!bounceTestFree(runner, inst, nx, ny, useall)) {
+                break;
+            }
+            inst->x = (float) nx;
+            inst->y = (float) ny;
+        }
+        break;
     }
     if (inst->x != origX || inst->y != origY) {
         SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
