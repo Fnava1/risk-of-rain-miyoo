@@ -1541,7 +1541,8 @@ void VMBuiltins_setVariable(VMContext* ctx, Instance* inst, int16_t builtinVarId
         case BUILTIN_VAR_ALARM: {
             if (inst == nullptr) break;
             if (isValidAlarmIndex(arrayIndex)) {
-                int32_t newValue = RValue_toInt32(val);
+                int32_t newValue = (val.type == RVALUE_REAL) ? (int32_t) GMLReal_round(val.real) : RValue_toInt32(val);
+                if (newValue <= 0) newValue = -1;
 
 #ifdef ENABLE_VM_TRACING
                 if (inst->objectIndex >= 0 && (shgeti(ctx->alarmsToBeTraced, "*") != -1 || shgeti(ctx->alarmsToBeTraced, runner->dataWin->objt.objects[inst->objectIndex].name) != -1)) {
@@ -15630,7 +15631,8 @@ static RValue builtin_date_datetime_string(VMContext* ctx, MAYBE_UNUSED RValue* 
 }
 
 static RValue builtin_action_set_alarm(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
-    int32_t steps = RValue_toInt32(args[0]);
+    int32_t steps = (args[0].type == RVALUE_REAL) ? (int32_t) GMLReal_round(args[0].real) : RValue_toInt32(args[0]);
+    if (steps <= 0) steps = -1;
     int32_t alarmIndex = RValue_toInt32(args[1]);
 
     if (0 > alarmIndex || alarmIndex >= GML_ALARM_COUNT) {
@@ -15657,7 +15659,8 @@ static RValue builtin_action_set_alarm(VMContext* ctx, MAYBE_UNUSED RValue* args
 
 static RValue builtin_alarm_set(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
     int32_t alarmIndex = RValue_toInt32(args[0]);
-    int32_t value = RValue_toInt32(args[1]);
+    int32_t value = (args[1].type == RVALUE_REAL) ? (int32_t) GMLReal_round(args[1].real) : RValue_toInt32(args[1]);
+    if (value <= 0) value = -1;
 
     if (0 > alarmIndex || alarmIndex >= GML_ALARM_COUNT) {
         return RValue_makeUndefined();
