@@ -7518,8 +7518,8 @@ static bool noCollisionWithObject(Runner* runner, Instance* caller, GMLReal test
                         if (other->lastCollisionQueryId == query.queryId) continue;
                         other->lastCollisionQueryId = query.queryId;
 
-                        if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, objIndex)) continue;
                         if (!query.matchAll && query.filterByInstanceId && other->instanceId != (uint32_t) objIndex) continue;
+                        if (!query.matchAll && query.filterByObject && other->objectIndex != objIndex && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, objIndex)) continue;
 
                         InstanceBBox otherBBox = Collision_computeBBox(runner, other);
                         if (!otherBBox.valid) continue;
@@ -10793,14 +10793,21 @@ static void moveOutsideCommon(Runner* runner, Instance* inst, GMLReal dir, GMLRe
     if (bounceTestFree(runner, inst, inst->x, inst->y, useall)) {
         return;
     }
+    float origX = inst->x;
+    float origY = inst->y;
     for (int32_t i = 1; steps >= i; i++) {
-        inst->x = (float) (inst->x + dx);
-        inst->y = (float) (inst->y + dy);
-        SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
-        if (bounceTestFree(runner, inst, inst->x, inst->y, useall)) {
+        GMLReal nx = origX + (GMLReal) i * dx;
+        GMLReal ny = origY + (GMLReal) i * dy;
+        if (bounceTestFree(runner, inst, nx, ny, useall)) {
+            inst->x = (float) nx;
+            inst->y = (float) ny;
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         }
     }
+    inst->x = (float) (origX + (GMLReal) steps * dx);
+    inst->y = (float) (origY + (GMLReal) steps * dy);
+    SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
 }
 
 static RValue builtin_move_outside_solid(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
@@ -14211,8 +14218,8 @@ static RValue builtin_place_meeting(VMContext* ctx, RValue* args, int32_t argCou
                     if (other->lastCollisionQueryId == query.queryId) continue;
                     other->lastCollisionQueryId = query.queryId;
 
-                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, target)) continue;
                     if (!query.matchAll && query.filterByInstanceId && other->instanceId != (uint32_t) target) continue;
+                    if (!query.matchAll && query.filterByObject && other->objectIndex != target && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, target)) continue;
 
                     InstanceBBox otherBBox = Collision_computeBBox(runner, other);
                     if (!otherBBox.valid) continue;
@@ -14279,10 +14286,9 @@ static RValue builtin_collision_line(VMContext* ctx, RValue* args, int32_t argCo
                     if (inst->lastCollisionQueryId == query.queryId) continue;
                     inst->lastCollisionQueryId = query.queryId;
 
-                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
                     if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
-
                     if (!Collision_lineOverlapsInstance(ctx->runner, inst, lx1, ly1, lx2, ly2)) continue;
+                    if (!query.matchAll && query.filterByObject && inst->objectIndex != targetObjIndex && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
 
                     if (prec != 0) {
                         Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
@@ -14511,10 +14517,9 @@ static RValue builtin_collision_rectangle(VMContext* ctx, RValue* args, int32_t 
                 if (inst->lastCollisionQueryId == query.queryId) continue;
                 inst->lastCollisionQueryId = query.queryId;
 
-                if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
                 if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
-
                 if (!Collision_rectOverlapsInstance(ctx->runner, inst, x1, y1, x2, y2)) continue;
+                if (!query.matchAll && query.filterByObject && inst->objectIndex != targetObjIndex && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
 
                 InstanceBBox bbox = Collision_computeBBox(ctx->runner, inst);
 
@@ -14605,10 +14610,9 @@ static RValue builtin_collision_circle(VMContext* ctx, RValue* args, int32_t arg
                 if (inst->lastCollisionQueryId == query.queryId) continue;
                 inst->lastCollisionQueryId = query.queryId;
 
-                if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
                 if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
-
                 if (!Collision_circleOverlapsInstance(ctx->runner, inst, cx, cy, radius)) continue;
+                if (!query.matchAll && query.filterByObject && inst->objectIndex != targetObjIndex && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
 
                 if (prec != 0) {
                     Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
@@ -14699,10 +14703,9 @@ static RValue builtin_collision_ellipse(VMContext* ctx, RValue* args, int32_t ar
                 if (inst->lastCollisionQueryId == query.queryId) continue;
                 inst->lastCollisionQueryId = query.queryId;
 
-                if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
                 if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
-
                 if (!Collision_ellipseOverlapsInstance(ctx->runner, inst, x1, y1, x2, y2)) continue;
+                if (!query.matchAll && query.filterByObject && inst->objectIndex != targetObjIndex && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
 
                 if (prec != 0) {
                     Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
@@ -15150,10 +15153,9 @@ static RValue builtin_collision_point(VMContext* ctx, RValue* args, int32_t argC
                     if (inst->lastCollisionQueryId == query.queryId) continue;
                     inst->lastCollisionQueryId = query.queryId;
 
-                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
                     if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
-
                     if (!Collision_pointInsideInstanceBox(ctx->runner, inst, px, py)) continue;
+                    if (!query.matchAll && query.filterByObject && inst->objectIndex != targetObjIndex && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
 
                     if (prec != 0) {
                         Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
@@ -15231,8 +15233,8 @@ static RValue builtin_instance_place(VMContext* ctx, RValue* args, int32_t argCo
                     if (other->lastCollisionQueryId == query.queryId) continue;
                     other->lastCollisionQueryId = query.queryId;
 
-                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, targetObjIndex)) continue;
                     if (!query.matchAll && query.filterByInstanceId && other->instanceId != (uint32_t) targetObjIndex) continue;
+                    if (!query.matchAll && query.filterByObject && other->objectIndex != targetObjIndex && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, targetObjIndex)) continue;
 
                     InstanceBBox otherBBox = Collision_computeBBox(runner, other);
                     if (!otherBBox.valid) continue;
@@ -15294,8 +15296,8 @@ static RValue builtin_instance_place_list(VMContext* ctx, RValue* args, int32_t 
                     if (other->lastCollisionQueryId == query.queryId) continue;
                     other->lastCollisionQueryId = query.queryId;
 
-                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, targetObjIndex)) continue;
                     if (!query.matchAll && query.filterByInstanceId && other->instanceId != (uint32_t) targetObjIndex) continue;
+                    if (!query.matchAll && query.filterByObject && other->objectIndex != targetObjIndex && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, targetObjIndex)) continue;
 
                     InstanceBBox otherBBox = Collision_computeBBox(runner, other);
                     if (!otherBBox.valid) continue;
@@ -15345,10 +15347,9 @@ static RValue builtin_instance_position(VMContext* ctx, RValue* args, int32_t ar
                     if (inst->lastCollisionQueryId == query.queryId) continue;
                     inst->lastCollisionQueryId = query.queryId;
 
-                    if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
                     if (!query.matchAll && query.filterByInstanceId && inst->instanceId != (uint32_t) targetObjIndex) continue;
-
                     if (!Collision_pointInsideInstanceBox(ctx->runner, inst, px, py)) continue;
+                    if (!query.matchAll && query.filterByObject && inst->objectIndex != targetObjIndex && !VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, targetObjIndex)) continue;
 
                     Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
                     if (Collision_hasFrameMasks(spr) && !Collision_pointInInstance(spr, inst, px, py)) continue;
@@ -15410,10 +15411,9 @@ static RValue builtin_position_meeting(VMContext* ctx, RValue* args, int32_t arg
                 if (other->lastCollisionQueryId == query.queryId) continue;
                 other->lastCollisionQueryId = query.queryId;
 
-                if (!query.matchAll && query.filterByObject && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, target)) continue;
                 if (!query.matchAll && query.filterByInstanceId && other->instanceId != (uint32_t) target) continue;
-
                 if (!Collision_pointInsideInstanceBox(ctx->runner, other, px, py)) continue;
+                if (!query.matchAll && query.filterByObject && other->objectIndex != target && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, target)) continue;
 
                 // GameMaker ALWAYS does precise collision checks here
                 Sprite* spr = Collision_getSprite(ctx->dataWin, other);
@@ -21087,6 +21087,23 @@ static void particleEmitterPoint(Runner* runner, ParticleEmitter* emitter, GMLRe
 }
 
 static void particleEmitterSpawn(Runner* runner, ParticleSystem* system, ParticleEmitter* emitter, int32_t typeId, int32_t count) {
+    if (count <= 0) return;
+    if (runner->viewsEnabled) {
+        GMLCamera* camera = Runner_getCameraForView(runner, 0);
+        if (camera != nullptr && camera->viewWidth > 0 && camera->viewHeight > 0) {
+            GMLReal vx = camera->viewX;
+            GMLReal vy = camera->viewY;
+            GMLReal vw = camera->viewWidth;
+            GMLReal vh = camera->viewHeight;
+            GMLReal exMin = GMLReal_fmin(emitter->xmin, emitter->xmax);
+            GMLReal exMax = GMLReal_fmax(emitter->xmin, emitter->xmax);
+            GMLReal eyMin = GMLReal_fmin(emitter->ymin, emitter->ymax);
+            GMLReal eyMax = GMLReal_fmax(emitter->ymin, emitter->ymax);
+            if (exMax < vx - 128.0 || exMin > vx + vw + 128.0 || eyMax < vy - 128.0 || eyMin > vy + vh + 128.0) {
+                return;
+            }
+        }
+    }
     repeat(count, i) {
         GMLReal x, y;
         particleEmitterPoint(runner, emitter, &x, &y);

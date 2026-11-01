@@ -447,6 +447,88 @@ static inline bool Collision_pointInInstance(Sprite* spr, Instance* inst, GMLRea
 
 // Returns true if the two instances' collision shapes overlap.
 //
+typedef struct {
+    uint8_t* mask;
+    uint32_t bytesPerRow;
+    GMLReal invScaleX;
+    GMLReal invScaleY;
+    GMLReal originX;
+    GMLReal originY;
+    GMLReal instX;
+    GMLReal instY;
+    GMLReal cs;
+    GMLReal sn;
+    int32_t maskOffsetX;
+    int32_t maskOffsetY;
+    int32_t maskWidth;
+    int32_t maskHeight;
+    int32_t sprWidth;
+    int32_t sprHeight;
+    bool hasMask;
+    bool isRotated;
+    bool valid;
+} PreciseCollisionSampler;
+
+static inline PreciseCollisionSampler Collision_createPreciseSampler(Sprite* spr, Instance* inst) {
+    PreciseCollisionSampler s = {0};
+    if (spr == nullptr || inst == nullptr) return s;
+    if (0.0001 > GMLReal_fabs(inst->imageXscale) || 0.0001 > GMLReal_fabs(inst->imageYscale)) return s;
+
+    s.valid = true;
+    s.sprWidth = (int32_t) spr->width;
+    s.sprHeight = (int32_t) spr->height;
+    s.originX = (GMLReal) spr->originX;
+    s.originY = (GMLReal) spr->originY;
+    s.instX = inst->x;
+    s.instY = inst->y;
+    s.invScaleX = 1.0 / inst->imageXscale;
+    s.invScaleY = 1.0 / inst->imageYscale;
+
+    if (GMLReal_fabs(inst->imageAngle) > 0.0001) {
+        s.isRotated = true;
+        GMLReal rad = inst->imageAngle * (M_PI / 180.0);
+        s.cs = GMLReal_cos(rad);
+        s.sn = GMLReal_sin(rad);
+    }
+
+    if (Collision_hasFrameMasks(spr) && spr->maskCount > 0) {
+        s.hasMask = true;
+        uint32_t frameIdx = ((uint32_t) inst->imageIndex) % spr->maskCount;
+        s.mask = spr->masks[frameIdx];
+        s.maskOffsetX = spr->maskOffsetX;
+        s.maskOffsetY = spr->maskOffsetY;
+        s.maskWidth = (int32_t) spr->maskWidth;
+        s.maskHeight = (int32_t) spr->maskHeight;
+        s.bytesPerRow = (spr->maskWidth + 7) / 8;
+    }
+
+    return s;
+}
+
+static inline bool Collision_samplePrecise(const PreciseCollisionSampler* s, GMLReal px, GMLReal py) {
+    if (!s->valid) return false;
+    GMLReal dx = px - s->instX;
+    GMLReal dy = py - s->instY;
+    if (s->isRotated) {
+        GMLReal rx = s->cs * dx - s->sn * dy;
+        GMLReal ry = s->sn * dx + s->cs * dy;
+        dx = rx;
+        dy = ry;
+    }
+    GMLReal localX = dx * s->invScaleX + s->originX;
+    GMLReal localY = dy * s->invScaleY + s->originY;
+    int32_t ix = (int32_t) localX;
+    int32_t iy = (int32_t) localY;
+    if (0 > ix || 0 > iy || ix >= s->sprWidth || iy >= s->sprHeight) return false;
+    if (s->hasMask) {
+        int32_t mx = ix - s->maskOffsetX;
+        int32_t my = iy - s->maskOffsetY;
+        if (0 > mx || 0 > my || mx >= s->maskWidth || my >= s->maskHeight) return false;
+        return (s->mask[my * s->bytesPerRow + (mx >> 3)] & (1 << (7 - (mx & 7)))) != 0;
+    }
+    return true;
+}
+
 // Matches the native GMS 1.4 runner's flow in FUN_0043fde0:
 //   1. AABB overlap test on the two precomputed bboxes.
 //   2. If neither sprite is precise (sepMasks == 1), the AABB overlap is enough.
@@ -537,14 +619,68 @@ static inline bool Collision_instancesOverlapPrecise(Runner* runner, Instance* a
         sampleOffset = 0.5;
     }
 
-    for (int32_t py = startY; (compatMode ? py <= endY : py < endY); py++) {
-        for (int32_t px = startX; (compatMode ? px <= endX : px < endX); px++) {
-            GMLReal wpx = (GMLReal) px + sampleOffset;
+    PreciseCollisionSampler sA = Collision_createPreciseSampler(sprA, a);
+    PreciseCollisionSampler sB = Collision_createPreciseSampler(sprB, b);
+    if (!sA.valid || !sB.valid) return false;
+
+    if (!sA.isRotated && !sB.isRotated) {
+        for (int32_t py = startY; (compatMode ? py <= endY : py < endY); py++) {
             GMLReal wpy = (GMLReal) py + sampleOffset;
 
-            if (!Collision_pointInInstance(sprA, a, wpx, wpy)) continue;
-            if (!Collision_pointInInstance(sprB, b, wpx, wpy)) continue;
-            return true;
+            int32_t iyA = (int32_t) ((wpy - sA.instY) * sA.invScaleY + sA.originY);
+            if (0 > iyA || iyA >= sA.sprHeight) continue;
+
+            int32_t iyB = (int32_t) ((wpy - sB.instY) * sB.invScaleY + sB.originY);
+            if (0 > iyB || iyB >= sB.sprHeight) continue;
+
+            uint8_t* rowMaskA = nullptr;
+            if (sA.hasMask) {
+                int32_t myA = iyA - sA.maskOffsetY;
+                if (0 > myA || myA >= sA.maskHeight) continue;
+                rowMaskA = sA.mask + (size_t) myA * sA.bytesPerRow;
+            }
+
+            uint8_t* rowMaskB = nullptr;
+            if (sB.hasMask) {
+                int32_t myB = iyB - sB.maskOffsetY;
+                if (0 > myB || myB >= sB.maskHeight) continue;
+                rowMaskB = sB.mask + (size_t) myB * sB.bytesPerRow;
+            }
+
+            for (int32_t px = startX; (compatMode ? px <= endX : px < endX); px++) {
+                GMLReal wpx = (GMLReal) px + sampleOffset;
+
+                // Test A
+                int32_t ixA = (int32_t) ((wpx - sA.instX) * sA.invScaleX + sA.originX);
+                if (0 > ixA || ixA >= sA.sprWidth) continue;
+                if (rowMaskA != nullptr) {
+                    int32_t mxA = ixA - sA.maskOffsetX;
+                    if (0 > mxA || mxA >= sA.maskWidth) continue;
+                    if ((rowMaskA[mxA >> 3] & (1 << (7 - (mxA & 7)))) == 0) continue;
+                }
+
+                // Test B
+                int32_t ixB = (int32_t) ((wpx - sB.instX) * sB.invScaleX + sB.originX);
+                if (0 > ixB || ixB >= sB.sprWidth) continue;
+                if (rowMaskB != nullptr) {
+                    int32_t mxB = ixB - sB.maskOffsetX;
+                    if (0 > mxB || mxB >= sB.maskWidth) continue;
+                    if ((rowMaskB[mxB >> 3] & (1 << (7 - (mxB & 7)))) == 0) continue;
+                }
+
+                return true;
+            }
+        }
+    } else {
+        for (int32_t py = startY; (compatMode ? py <= endY : py < endY); py++) {
+            for (int32_t px = startX; (compatMode ? px <= endX : px < endX); px++) {
+                GMLReal wpx = (GMLReal) px + sampleOffset;
+                GMLReal wpy = (GMLReal) py + sampleOffset;
+
+                if (!Collision_samplePrecise(&sA, wpx, wpy)) continue;
+                if (!Collision_samplePrecise(&sB, wpx, wpy)) continue;
+                return true;
+            }
         }
     }
 
