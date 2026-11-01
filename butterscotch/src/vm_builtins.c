@@ -9938,12 +9938,22 @@ static RValue builtin_instance_number(VMContext* ctx, MAYBE_UNUSED RValue* args,
     Runner* runner = ctx->runner;
     int32_t objectIndex = RValue_toInt32(args[0]);
     int32_t count = 0;
-    int32_t snapBase = Runner_pushInstancesOfObject(runner, objectIndex);
-    int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
-    for (int32_t i = snapBase; snapEnd > i; i++) {
-        if (runner->instanceSnapshots[i]->active) count++;
+
+    if (objectIndex == INSTANCE_ALL) {
+        int32_t total = (int32_t) arrlen(runner->instances);
+        for (int32_t i = 0; total > i; i++) {
+            if (runner->instances[i]->active && !runner->instances[i]->destroyed) count++;
+        }
+        return RValue_makeReal((GMLReal) count);
     }
-    Runner_popInstanceSnapshot(runner, snapBase);
+
+    if (objectIndex >= 0 && (uint32_t) objectIndex < runner->dataWin->objt.count) {
+        Instance** list = runner->instancesByObject[objectIndex];
+        int32_t total = (int32_t) arrlen(list);
+        for (int32_t i = 0; total > i; i++) {
+            if (list[i]->active && !list[i]->destroyed) count++;
+        }
+    }
     return RValue_makeReal((GMLReal) count);
 }
 
@@ -9952,17 +9962,32 @@ static RValue builtin_instance_find(VMContext* ctx, RValue* args, int32_t argCou
     Runner* runner = ctx->runner;
     int32_t objectIndex = RValue_toInt32(args[0]);
     int32_t n = RValue_toInt32(args[1]);
+    if (n < 0) return RValue_makeReal(INSTANCE_NOONE);
+
     int32_t count = 0;
     int32_t resultId = INSTANCE_NOONE;
-    int32_t snapBase = Runner_pushInstancesOfObject(runner, objectIndex);
-    int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
-    for (int32_t i = snapBase; snapEnd > i; i++) {
-        Instance* inst = runner->instanceSnapshots[i];
-        if (!inst->active) continue;
-        if (count == n) { resultId = inst->instanceId; break; }
-        count++;
+
+    if (objectIndex == INSTANCE_ALL) {
+        int32_t total = (int32_t) arrlen(runner->instances);
+        for (int32_t i = 0; total > i; i++) {
+            Instance* inst = runner->instances[i];
+            if (!inst->active || inst->destroyed) continue;
+            if (count == n) { resultId = inst->instanceId; break; }
+            count++;
+        }
+        return RValue_makeReal((GMLReal) resultId);
     }
-    Runner_popInstanceSnapshot(runner, snapBase);
+
+    if (objectIndex >= 0 && (uint32_t) objectIndex < runner->dataWin->objt.count) {
+        Instance** list = runner->instancesByObject[objectIndex];
+        int32_t total = (int32_t) arrlen(list);
+        for (int32_t i = 0; total > i; i++) {
+            Instance* inst = list[i];
+            if (!inst->active || inst->destroyed) continue;
+            if (count == n) { resultId = inst->instanceId; break; }
+            count++;
+        }
+    }
     return RValue_makeReal((GMLReal) resultId);
 }
 
@@ -9971,26 +9996,61 @@ static RValue builtin_instance_nearest(VMContext* ctx, RValue* args, int32_t arg
     Runner* runner = ctx->runner;
     GMLReal x = RValue_toReal(args[0]);
     GMLReal y = RValue_toReal(args[1]);
-    GMLReal bestDistSq = 0.0;
     int32_t objectIndex = RValue_toInt32(args[2]);
-    int32_t resultId = INSTANCE_NOONE;
-    int32_t snapBase = Runner_pushInstancesOfObject(runner, objectIndex);
-    int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
-    for (int32_t i = snapBase; snapEnd > i; i++) {
-        Instance* inst = runner->instanceSnapshots[i];
-        if (!inst->active) continue;
 
-        GMLReal dx = inst->x - x;
-        GMLReal dy = inst->y - y;
-        GMLReal distSq = dx * dx + dy * dy;
+    if (objectIndex == INSTANCE_ALL) {
+        GMLReal bestDistSq = 0.0;
+        int32_t resultId = INSTANCE_NOONE;
+        int32_t total = (int32_t) arrlen(runner->instances);
+        for (int32_t i = 0; total > i; i++) {
+            Instance* inst = runner->instances[i];
+            if (!inst->active || inst->destroyed) continue;
 
-        if (resultId == INSTANCE_NOONE || distSq < bestDistSq) {
-            resultId = inst->instanceId;
-            bestDistSq = distSq;
+            GMLReal dx = inst->x - x;
+            GMLReal dy = inst->y - y;
+            GMLReal distSq = dx * dx + dy * dy;
+
+            if (resultId == INSTANCE_NOONE || distSq < bestDistSq) {
+                resultId = inst->instanceId;
+                bestDistSq = distSq;
+            }
         }
+        return RValue_makeReal((GMLReal) resultId);
     }
-    Runner_popInstanceSnapshot(runner, snapBase);
-    return RValue_makeReal((GMLReal) resultId);
+
+    if (objectIndex >= 0 && (uint32_t) objectIndex < runner->dataWin->objt.count) {
+        Instance** list = runner->instancesByObject[objectIndex];
+        int32_t total = (int32_t) arrlen(list);
+        if (total == 0) return RValue_makeReal(INSTANCE_NOONE);
+
+        // O(1) Fast-path: single instance in bucket (e.g. searching for player oP)
+        if (total == 1) {
+            Instance* inst = list[0];
+            if (inst != nullptr && inst->active && !inst->destroyed) {
+                return RValue_makeReal((GMLReal) inst->instanceId);
+            }
+            return RValue_makeReal(INSTANCE_NOONE);
+        }
+
+        GMLReal bestDistSq = 0.0;
+        int32_t resultId = INSTANCE_NOONE;
+        for (int32_t i = 0; total > i; i++) {
+            Instance* inst = list[i];
+            if (!inst->active || inst->destroyed) continue;
+
+            GMLReal dx = inst->x - x;
+            GMLReal dy = inst->y - y;
+            GMLReal distSq = dx * dx + dy * dy;
+
+            if (resultId == INSTANCE_NOONE || distSq < bestDistSq) {
+                resultId = inst->instanceId;
+                bestDistSq = distSq;
+            }
+        }
+        return RValue_makeReal((GMLReal) resultId);
+    }
+
+    return RValue_makeReal(INSTANCE_NOONE);
 }
 
 static RValue builtin_instance_nearest_var_yoyo(VMContext* ctx, RValue* args, int32_t argCount) {
@@ -10008,13 +10068,25 @@ static RValue builtin_instance_nearest_var_yoyo(VMContext* ctx, RValue* args, in
     int32_t resultId = INSTANCE_NOONE;
     GMLReal bestDistSq = 0.0;
 
-    int32_t snapBase = Runner_pushInstancesOfObject(runner, objectIndex);
-    int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
+    Instance** list = nullptr;
+    int32_t total = 0;
+
+    if (objectIndex == INSTANCE_ALL) {
+        list = runner->instances;
+        total = (int32_t) arrlen(runner->instances);
+    } else if (objectIndex >= 0 && (uint32_t) objectIndex < runner->dataWin->objt.count) {
+        list = runner->instancesByObject[objectIndex];
+        total = (int32_t) arrlen(list);
+    }
+
+    if (total == 0 || list == nullptr) {
+        return RValue_makeReal(INSTANCE_NOONE);
+    }
 
     // Fast-path: if only 1 instance exists in the object bucket (e.g. single player oP)
-    if (snapEnd - snapBase == 1) {
-        Instance* inst = runner->instanceSnapshots[snapBase];
-        if (inst != nullptr && inst->active) {
+    if (total == 1) {
+        Instance* inst = list[0];
+        if (inst != nullptr && inst->active && !inst->destroyed) {
             bool matches = true;
             if (varID >= 0) {
                 RValue v = Instance_getSelfVar(inst, varID);
@@ -10026,13 +10098,12 @@ static RValue builtin_instance_nearest_var_yoyo(VMContext* ctx, RValue* args, in
                 resultId = inst->instanceId;
             }
         }
-        Runner_popInstanceSnapshot(runner, snapBase);
         return RValue_makeReal((GMLReal) resultId);
     }
 
-    for (int32_t i = snapBase; i < snapEnd; i++) {
-        Instance* inst = runner->instanceSnapshots[i];
-        if (!inst || !inst->active) continue;
+    for (int32_t i = 0; i < total; i++) {
+        Instance* inst = list[i];
+        if (!inst || !inst->active || inst->destroyed) continue;
 
         if (varID >= 0) {
             RValue v = Instance_getSelfVar(inst, varID);
@@ -10050,7 +10121,6 @@ static RValue builtin_instance_nearest_var_yoyo(VMContext* ctx, RValue* args, in
             bestDistSq = distSq;
         }
     }
-    Runner_popInstanceSnapshot(runner, snapBase);
     return RValue_makeReal((GMLReal) resultId);
 }
 
@@ -10060,12 +10130,11 @@ static RValue builtin_instance_exists(VMContext* ctx, RValue* args, int32_t argC
     int32_t id = RValue_toInt32(args[0]);
     bool found = false;
     if (id >= 0 && runner->dataWin->objt.count > (uint32_t) id) {
-        int32_t snapBase = Runner_pushInstancesOfObject(runner, id);
-        int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
-        for (int32_t i = snapBase; snapEnd > i; i++) {
-            if (runner->instanceSnapshots[i]->active) { found = true; break; }
+        Instance** list = runner->instancesByObject[id];
+        int32_t total = (int32_t) arrlen(list);
+        for (int32_t i = 0; total > i; i++) {
+            if (list[i]->active && !list[i]->destroyed) { found = true; break; }
         }
-        Runner_popInstanceSnapshot(runner, snapBase);
     } else {
         // Instance ID: search for a specific instance
         Instance* inst = hmget(runner->instancesById, id);
