@@ -68,10 +68,10 @@ class TestDebugMode(unittest.TestCase):
         self.assertIn("UES Contact Light (6)", content)
         self.assertIn("Boar Beach (Secret)", content)
 
-        # Room 7 (rSelectCoop) and Room 39 (rHost) detection
-        self.assertIn("runner->currentRoomIndex == 7 || runner->currentRoomIndex == 39", content)
+        # Room 7 (rSelectCoop) detection and combo-driven toggle
+        self.assertIn("runner->currentRoomIndex == 7", content)
         self.assertIn('strcmp(runner->currentRoom->name, "rSelectCoop") == 0', content)
-        self.assertIn('strcmp(runner->currentRoom->name, "rHost") == 0', content)
+        self.assertIn("s_debug_menu_open", content)
 
     def test_clean_room_byod_compliance(self):
         """Verifies no proprietary Risk of Rain game binaries or assets are tracked in git."""

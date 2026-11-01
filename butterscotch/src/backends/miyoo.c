@@ -1224,13 +1224,13 @@ static const DebugStageOption s_debug_stages[] = {
 static int s_debug_stage_idx = 0;
 static int s_debug_level = 1;
 static int s_debug_menu_row = 0; // 0 = Stage, 1 = Level, 2 = START, 3 = CANCEL
+static bool s_debug_menu_open = false;
 
 static bool is_debug_room(Runner *runner) {
     if (!runner) return false;
-    if (runner->currentRoomIndex == 7 || runner->currentRoomIndex == 39) return true;
+    if (runner->currentRoomIndex == 7) return true;
     if (runner->currentRoom && runner->currentRoom->name) {
-        if (strcmp(runner->currentRoom->name, "rSelectCoop") == 0 ||
-            strcmp(runner->currentRoom->name, "rHost") == 0) {
+        if (strcmp(runner->currentRoom->name, "rSelectCoop") == 0) {
             return true;
         }
     }
@@ -1291,7 +1291,7 @@ static void mmp_debug_menu_draw(uint16_t *fb, int tw, int th) {
         } else if (r == 2) {
             snprintf(line_buf, sizeof(line_buf), "[ START TEST RUN (Press A / START) ]");
         } else if (r == 3) {
-            snprintf(line_buf, sizeof(line_buf), "[ CANCEL / RETURN TO MENU (Press B) ]");
+            snprintf(line_buf, sizeof(line_buf), "[ CLOSE / RETURN TO GAME (Press B) ]");
         }
 
         int text_len = (int)strlen(line_buf);
@@ -1301,7 +1301,7 @@ static void mmp_debug_menu_draw(uint16_t *fb, int tw, int th) {
     }
 
     // 4. Instructions footer
-    const char *footer = "D-Pad: Navigate | L1/R1: Fast Level | A: Select | B: Back";
+    const char *footer = "D-Pad: Navigate | L1/R1: Fast Level | A: Select | B: Close";
     int f_len = (int)strlen(footer);
     font8x8_draw_string(fb, tw, th, px + (pw - f_len * 8) / 2, py + 238, footer, 0xCE79, 1); // Soft silver
 }
@@ -1318,7 +1318,7 @@ void platformSwapBuffers(void) {
         mmp_osk_draw(fb, tw, th);
     }
 
-    if (is_debug_room(g_runner)) {
+    if (s_debug_menu_open && is_debug_room(g_runner)) {
         mmp_debug_menu_draw(fb, tw, th);
     }
 
@@ -1571,7 +1571,34 @@ bool platformHandleEvents(void) {
 
     mmp_check_network_autoconnect(g_runner);
 
+    // Debug Hub combo check (L + R + Select) restricted strictly to Local Co-op (rSelectCoop)
     if (is_debug_room(g_runner)) {
+        bool l_held = s_curr_state.l1 || s_curr_state.l2;
+        bool r_held = s_curr_state.r1 || s_curr_state.r2;
+        bool sel_down = s_curr_state.select && !s_curr_state.start;
+        bool combo_now = l_held && r_held && sel_down;
+
+        bool prev_l = s_prev_state.l1 || s_prev_state.l2;
+        bool prev_r = s_prev_state.r1 || s_prev_state.r2;
+        bool prev_sel = s_prev_state.select && !s_prev_state.start;
+        bool combo_prev = prev_l && prev_r && prev_sel;
+
+        if (combo_now && !combo_prev) {
+            s_debug_menu_open = !s_debug_menu_open;
+            logInfo("Miyoo: Debug Menu toggled %s via L+R+Select combo\n", s_debug_menu_open ? "OPEN" : "CLOSED");
+            if (g_runner->gamepads) {
+                GamepadSlot *slot = &g_runner->gamepads->slots[0];
+                slot->connected = true;
+                memset(slot->buttonDown, 0, sizeof(slot->buttonDown));
+                memset(slot->buttonPressed, 0, sizeof(slot->buttonPressed));
+                memset(slot->buttonReleased, 0, sizeof(slot->buttonReleased));
+            }
+        }
+    } else {
+        s_debug_menu_open = false;
+    }
+
+    if (s_debug_menu_open && is_debug_room(g_runner)) {
         if (s_curr_state.up && !s_prev_state.up) {
             s_debug_menu_row = (s_debug_menu_row + 3) % 4;
         }
@@ -1627,6 +1654,7 @@ bool platformHandleEvents(void) {
             g_runner->debug_target_stage = target_room;
             g_runner->debug_target_level = s_debug_level;
             g_runner->debug_hub_spawned = false;
+            s_debug_menu_open = false;
 
             // Transition to rSelect (room 6) for character and artifact selection
             int32_t select_room = 6;
@@ -1637,22 +1665,15 @@ bool platformHandleEvents(void) {
             g_runner->pendingRoom = select_room;
         }
 
-        // B or (A on CANCEL button) -> return to main menu
+        // B or (A on CANCEL / CLOSE button) -> close debug menu overlay and resume room
         bool b_pressed = (s_curr_state.b && !s_prev_state.b);
         bool a_on_cancel = (s_curr_state.a && !s_prev_state.a && s_debug_menu_row == 3);
         if (b_pressed || a_on_cancel) {
-            logInfo("Miyoo: Debug Hub cancelled, returning to main menu\n");
-            g_runner->debug_test_active = false;
-            int32_t menu_room = 2; // rStart / rMenu
-            if (g_runner->assetsByName) {
-                int32_t dyn_menu = shget(g_runner->assetsByName, "rStart");
-                if (dyn_menu < 0) dyn_menu = shget(g_runner->assetsByName, "rMenu");
-                if (dyn_menu >= 0) menu_room = dyn_menu;
-            }
-            g_runner->pendingRoom = menu_room;
+            logInfo("Miyoo: Debug Hub closed, resuming normal room\n");
+            s_debug_menu_open = false;
         }
 
-        // Suppress inputs and mouse to background objects in rSelectCoop / rHost
+        // Suppress inputs and mouse to background objects in rSelectCoop while menu is open
         s_mouse_x = -100.0;
         s_mouse_y = -100.0;
         if (g_runner->gamepads) {
@@ -1736,6 +1757,7 @@ bool platformHandleEvents(void) {
         static int32_t s_last_room = -1;
         if (g_runner->currentRoomIndex != s_last_room) {
             s_last_room = g_runner->currentRoomIndex;
+            s_debug_menu_open = false;
             if (is_gameplay_room(g_runner)) {
                 s_mouse_x = -100.0;
                 s_mouse_y = -100.0;
