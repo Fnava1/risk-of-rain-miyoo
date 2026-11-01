@@ -739,6 +739,8 @@ struct Runner {
     int frameCount;
     int32_t damageObjIndex;
     int32_t explosionObjIndex;
+    int32_t efTrailObjIndex;
+    int32_t guardBulletObjIndex;
     float handheldScale;
     uint32_t nextInstanceId;
     RunnerKeyboardState* keyboard;

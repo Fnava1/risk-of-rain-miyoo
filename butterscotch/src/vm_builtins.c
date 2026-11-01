@@ -10074,6 +10074,12 @@ static RValue builtin_instance_destroy(VMContext* ctx, RValue* args, int32_t arg
     if (1 > argCount) {
         // No args: destroy the current instance
         if (ctx->currentInstance != nullptr) {
+            if (runner->efTrailObjIndex >= 0 && ctx->currentInstance->objectIndex == runner->efTrailObjIndex) {
+                // Keep oEfTrail pooled instead of destroying it to prevent invalidating runner->drawableListStructureDirty
+                ctx->currentInstance->active = false;
+                ctx->currentInstance->visible = false;
+                return RValue_makeUndefined();
+            }
             Runner_destroyInstance(runner, ctx->currentInstance, true);
         }
         return RValue_makeUndefined();
@@ -10126,6 +10132,38 @@ static RValue builtin_instance_create(VMContext* ctx, RValue* args, int32_t argC
             oldest->active = true;
             Runner_executeEvent(runner, oldest, EVENT_CREATE, 0);
             return RValue_makeReal((GMLReal) oldest->instanceId);
+        }
+    }
+
+    // Pooling oEfTrail to prevent VM slowdown and draw list invalidation from shadow clones
+    if (runner->efTrailObjIndex >= 0 && objectIndex == runner->efTrailObjIndex) {
+        Instance** trailBucket = runner->instancesByExactObject[objectIndex];
+        int32_t trailCount = trailBucket ? (int32_t)arrlen(trailBucket) : 0;
+        Instance* recycled = nullptr;
+        for (int32_t ti = 0; ti < trailCount; ti++) {
+            if (!trailBucket[ti]->active) {
+                recycled = trailBucket[ti];
+                break;
+            }
+        }
+        if (!recycled && trailCount >= 12) {
+            // LRU fallback when all 12 are active
+            recycled = trailBucket[0];
+            for (int32_t ti = 0; ti < trailCount - 1; ti++) {
+                trailBucket[ti] = trailBucket[ti + 1];
+            }
+            trailBucket[trailCount - 1] = recycled;
+        }
+        if (recycled != nullptr) {
+            recycled->x = x;
+            recycled->y = y;
+            recycled->xprevious = x;
+            recycled->yprevious = y;
+            recycled->imageAlpha = 1.0f;
+            recycled->active = true;
+            recycled->visible = true;
+            Runner_executeEvent(runner, recycled, EVENT_CREATE, 0);
+            return RValue_makeReal((GMLReal) recycled->instanceId);
         }
     }
 
@@ -13054,6 +13092,18 @@ static RValue builtin_draw_circle_color(VMContext* ctx, RValue* args, MAYBE_UNUS
         uint32_t col1 = RValue_toColour(args[3]);
         uint32_t col2 = RValue_toColour(args[4]);
         bool outline = RValue_toBool(args[5]);
+
+        // Guard projectile concentric overdraw decimation:
+        // oGuardBullet calls draw_circle_color 4 times (radii ~16 and ~24 for outer glow, plus white core).
+        // Skipping the redundant intermediate glow (r between 13 and 19) preserves the outer aura and core
+        // while halving the fillrate load across 20-30 bullets.
+        if (!outline && ctx->currentInstance != nullptr && runner->guardBulletObjIndex >= 0 &&
+            ctx->currentInstance->objectIndex == runner->guardBulletObjIndex) {
+            if (r > 13.0f && r < 19.0f) {
+                return RValue_makeUndefined();
+            }
+        }
+
         Renderer_drawCircleColor(runner->renderer, x, y, r, col1, col2, outline);
     }
     return RValue_makeUndefined();

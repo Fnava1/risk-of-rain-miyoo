@@ -2794,12 +2794,18 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
     runner->frameCount = 0;
     runner->damageObjIndex = -1;
     runner->explosionObjIndex = -1;
+    runner->efTrailObjIndex = -1;
+    runner->guardBulletObjIndex = -1;
     repeat(dataWin->objt.count, oi) {
         if (dataWin->objt.objects[oi].name) {
             if (strcmp(dataWin->objt.objects[oi].name, "oEfDamage") == 0) {
                 runner->damageObjIndex = (int32_t)oi;
             } else if (strcmp(dataWin->objt.objects[oi].name, "oExplosion") == 0) {
                 runner->explosionObjIndex = (int32_t)oi;
+            } else if (strcmp(dataWin->objt.objects[oi].name, "oEfTrail") == 0) {
+                runner->efTrailObjIndex = (int32_t)oi;
+            } else if (strcmp(dataWin->objt.objects[oi].name, "oGuardBullet") == 0) {
+                runner->guardBulletObjIndex = (int32_t)oi;
             }
         }
     }

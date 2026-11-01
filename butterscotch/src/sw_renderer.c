@@ -1474,14 +1474,29 @@ static void swDrawCircleColor(Renderer *renderer, float cx, float cy, float radi
         if (y0 < sw->clipY0) y0 = sw->clipY0;
         if (y1 >= sw->clipY1) y1 = sw->clipY1 - 1;
 
+        uint32_t a5 = ((uint32_t)a + 4) >> 3;
+        uint32_t inv_a5 = 32 - a5;
+        uint32_t const_s_rb = (uint32_t)(c565 & 0xF81F) * a5;
+        uint32_t const_s_g  = (uint32_t)(c565 & 0x07E0) * a5;
+        uint32_t c32 = ((uint32_t)c565 << 16) | (uint32_t)c565;
+
+        bool isCircle = fabsf(srx - sry) < 0.05f;
+        float rSq = srx * srx;
         float invSrySq = 1.0f / (sry * sry);
+
         for (int y = y0; y <= y1; y++) {
             float dy = (float)y - scy;
             float dySq = dy * dy;
-            float ratio = dySq * invSrySq;
-            if (ratio > 1.0f) continue;
+            float dx;
+            if (isCircle) {
+                if (dySq > rSq) continue;
+                dx = sqrtf(rSq - dySq);
+            } else {
+                float ratio = dySq * invSrySq;
+                if (ratio > 1.0f) continue;
+                dx = srx * sqrtf(1.0f - ratio);
+            }
 
-            float dx = srx * sqrtf(1.0f - ratio);
             int x0 = (int)roundf(scx - dx);
             int x1 = (int)roundf(scx + dx);
             if (x0 < sw->clipX0) x0 = sw->clipX0;
@@ -1490,12 +1505,26 @@ static void swDrawCircleColor(Renderer *renderer, float cx, float cy, float radi
 
             uint16_t *row = sw->currentTarget + y * stride;
             if (a == 255) {
-                for (int x = x0; x <= x1; x++) {
+                int x = x0;
+                if (((uintptr_t)(row + x) & 3) != 0 && x <= x1) {
+                    row[x] = c565;
+                    x++;
+                }
+                uint32_t *row32 = (uint32_t *)(row + x);
+                int count32 = (x1 - x + 1) >> 1;
+                for (int i = 0; i < count32; i++) {
+                    row32[i] = c32;
+                }
+                x += count32 << 1;
+                if (x <= x1) {
                     row[x] = c565;
                 }
             } else {
                 for (int x = x0; x <= x1; x++) {
-                    row[x] = blend_pixel_rgb565(row[x], c565, a);
+                    uint32_t p = row[x];
+                    uint32_t rb = ((const_s_rb + (p & 0xF81F) * inv_a5) >> 5) & 0xF81F;
+                    uint32_t g  = ((const_s_g  + (p & 0x07E0) * inv_a5) >> 5) & 0x07E0;
+                    row[x] = (uint16_t)(rb | g);
                 }
             }
         }
