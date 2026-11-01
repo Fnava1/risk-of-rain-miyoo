@@ -481,11 +481,29 @@ static uint32_t resolveLocalSlot(VMContext* ctx, int32_t varID) {
     // Grow this frame's localVars window to cover `slot` whether the entry is pre-existing or freshly allocated.
     // Pre-existing entries can still be past ctx->localVarCount if a nested call to the same code extended the slot map while the outer frame was suspended (the outer frame's localVarCount is captured at call entry and doesn't follow later growth).
     if (slot >= ctx->localVarCount) {
-        RValue* resizedLocalVars = (RValue *)safeCalloc(slot + 1, sizeof(RValue));
-        memcpy(resizedLocalVars, ctx->localVars, sizeof(RValue) * ctx->localVarCount);
-        free(ctx->localVars);
-        ctx->localVars = resizedLocalVars;
-        ctx->localVarCount = slot + 1;
+        if (!ctx->localVarsIsHeap && ctx->localsArena != nullptr &&
+            (ctx->localVars + (slot + 1) <= ctx->localsArena + VM_LOCALS_ARENA_SIZE) &&
+            (ctx->localVars + (ctx->localVarCount < 16 ? 16 : ctx->localVarCount) == ctx->localsArena + ctx->localsArenaTop)) {
+            uint32_t oldCap = (ctx->localVarCount < 16) ? 16 : ctx->localVarCount;
+            uint32_t newCap = slot + 1;
+            if (newCap < 16) newCap = 16;
+            if (newCap > oldCap) {
+                memset(ctx->localVars + oldCap, 0, (size_t)(newCap - oldCap) * sizeof(RValue));
+                ctx->localsArenaTop = (uint32_t)(ctx->localVars - ctx->localsArena) + newCap;
+            }
+            ctx->localVarCount = slot + 1;
+        } else {
+            RValue* resizedLocalVars = (RValue *)safeCalloc(slot + 1, sizeof(RValue));
+            if (ctx->localVars != nullptr && ctx->localVarCount > 0) {
+                memcpy(resizedLocalVars, ctx->localVars, sizeof(RValue) * ctx->localVarCount);
+            }
+            if (ctx->localVarsIsHeap) {
+                free(ctx->localVars);
+            }
+            ctx->localVars = resizedLocalVars;
+            ctx->localVarCount = slot + 1;
+            ctx->localVarsIsHeap = true;
+        }
     }
     return slot;
 }
@@ -3686,6 +3704,8 @@ VMContext* VM_create(DataWin* dataWin) {
     VMContext* ctx = (VMContext *)safeCalloc(1, sizeof(VMContext));
 #endif
     ctx->dataWin = dataWin;
+    ctx->localsArena = (RValue *)safeCalloc(VM_LOCALS_ARENA_SIZE, sizeof(RValue));
+    ctx->localsArenaTop = 0;
     ctx->stack.top = 0;
     ctx->selfId = -1;
     ctx->otherId = -1;
@@ -3855,6 +3875,9 @@ VMContext* VM_create(DataWin* dataWin) {
 }
 
 void VM_reset(VMContext* ctx) {
+    ctx->localsArenaTop = 0;
+    ctx->localVarsIsHeap = false;
+    ctx->scriptArgsIsHeap = false;
     // Reset stack
     ctx->stack.top = 0;
 
@@ -3953,9 +3976,21 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex) {
     setCurrentCodeLocalsSlotMap(ctx);
 
     uint32_t localsCount = computeLocalsCount(ctx, code);
-    RValue* localVars = (RValue *)safeCalloc(localsCount, sizeof(RValue));
+    bool isHeap = false;
+    uint32_t allocCount = localsCount < 16 ? 16 : localsCount;
+    RValue* localVars = nullptr;
+    if (ctx->localsArena != nullptr && ctx->localsArenaTop + allocCount <= VM_LOCALS_ARENA_SIZE) {
+        localVars = ctx->localsArena + ctx->localsArenaTop;
+        ctx->localsArenaTop += allocCount;
+        memset(localVars, 0, (size_t) allocCount * sizeof(RValue));
+        isHeap = false;
+    } else {
+        localVars = (RValue *)safeCalloc(localsCount, sizeof(RValue));
+        isHeap = true;
+    }
     ctx->localVars = localVars;
     ctx->localVarCount = localsCount;
+    ctx->localVarsIsHeap = isHeap;
 
     // Reset stack for top-level execution
     ctx->stack.top = 0;
@@ -3978,9 +4013,13 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex) {
     repeat(ctx->localVarCount, i) {
         RValue_free(&ctx->localVars[i]);
     }
-    free(ctx->localVars);
+    if (ctx->localVarsIsHeap) {
+        free(ctx->localVars);
+    }
     ctx->localVars = nullptr;
     ctx->localVarCount = 0;
+    ctx->localVarsIsHeap = false;
+    ctx->localsArenaTop = 0;
 
     // Reset all values in the stack (see issue #137)
     // Keep in mind that recent GameMaker versions do seem to emit Pop/Popz when exiting loops (example: when using a repeat + return) but older versions DO need it
@@ -4003,11 +4042,14 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     frame.savedBytecodeBase = ctx->bytecodeBase;
     frame.savedLocals = ctx->localVars;
     frame.savedLocalsCount = ctx->localVarCount;
+    frame.savedLocalVarsIsHeap = ctx->localVarsIsHeap;
     frame.savedCodeName = ctx->currentCodeName;
     frame.savedSavearefBalance = ctx->savearefBalance;
     frame.savedCodeLocalsSlotMap = ctx->currentCodeLocalsSlotMap;
     frame.savedScriptArgs = ctx->scriptArgs;
     frame.savedScriptArgCount = ctx->scriptArgCount;
+    frame.savedScriptArgsIsHeap = ctx->scriptArgsIsHeap;
+    frame.savedArenaTop = ctx->localsArenaTop;
     frame.savedCurrentCodeIndex = ctx->currentCodeIndex;
     frame.parent = ctx->callStack;
     ctx->callStack = &frame;
@@ -4025,16 +4067,37 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     setCurrentCodeLocalsSlotMap(ctx);
 
     uint32_t localsCount = computeLocalsCount(ctx, code);
-    RValue* localVars = (RValue *)safeCalloc(localsCount, sizeof(RValue));
+    bool localsIsHeap = false;
+    uint32_t allocCount = localsCount < 16 ? 16 : localsCount;
+    RValue* localVars = nullptr;
+    if (ctx->localsArena != nullptr && ctx->localsArenaTop + allocCount <= VM_LOCALS_ARENA_SIZE) {
+        localVars = ctx->localsArena + ctx->localsArenaTop;
+        ctx->localsArenaTop += allocCount;
+        memset(localVars, 0, (size_t) allocCount * sizeof(RValue));
+        localsIsHeap = false;
+    } else {
+        localVars = (RValue *)safeCalloc(localsCount, sizeof(RValue));
+        localsIsHeap = true;
+    }
     ctx->localVars = localVars;
     ctx->localVarCount = localsCount;
+    ctx->localVarsIsHeap = localsIsHeap;
 
     // Store arguments in scriptArgs (mirrors GMS 1.4's global argument stack).
     // Callee takes an INDEPENDENT reference for strings (strdup) and arrays (incRef) so
     // the caller's original args remain valid and owner-tracked by the caller.
     RValue* scriptArgs = nullptr;
+    bool argsIsHeap = false;
     if (argCount > 0 && args != nullptr) {
-        scriptArgs = (RValue *)safeCalloc(argCount, sizeof(RValue));
+        if (ctx->localsArena != nullptr && ctx->localsArenaTop + (uint32_t) argCount <= VM_LOCALS_ARENA_SIZE) {
+            scriptArgs = ctx->localsArena + ctx->localsArenaTop;
+            ctx->localsArenaTop += (uint32_t) argCount;
+            memset(scriptArgs, 0, (size_t) argCount * sizeof(RValue));
+            argsIsHeap = false;
+        } else {
+            scriptArgs = (RValue *)safeCalloc(argCount, sizeof(RValue));
+            argsIsHeap = true;
+        }
         repeat(argCount, argIdx) {
             RValue argCopy = RValue_makeIndependent(args[argIdx]);
             scriptArgs[argIdx] = argCopy;
@@ -4042,6 +4105,7 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     }
     ctx->scriptArgs = scriptArgs;
     ctx->scriptArgCount = argCount;
+    ctx->scriptArgsIsHeap = argsIsHeap;
 
     ctx->savearefBalance = 0;
 
@@ -4070,8 +4134,9 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     repeat(ctx->localVarCount, i) {
         RValue_free(&ctx->localVars[i]);
     }
-
-    free(ctx->localVars);
+    if (ctx->localVarsIsHeap) {
+        free(ctx->localVars);
+    }
 
     // Free callee script args
     {
@@ -4079,14 +4144,18 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
         RValue_free(&ctx->scriptArgs[i]);
     }
     }
+    if (ctx->scriptArgsIsHeap) {
+        free(ctx->scriptArgs);
+    }
 
-    free(ctx->scriptArgs);
-
+    ctx->localsArenaTop = saved->savedArenaTop;
     ctx->localVars = saved->savedLocals;
     ctx->localVarCount = saved->savedLocalsCount;
+    ctx->localVarsIsHeap = saved->savedLocalVarsIsHeap;
     ctx->currentCodeLocalsSlotMap = saved->savedCodeLocalsSlotMap;
     ctx->scriptArgs = saved->savedScriptArgs;
     ctx->scriptArgCount = saved->savedScriptArgCount;
+    ctx->scriptArgsIsHeap = saved->savedScriptArgsIsHeap;
     ctx->currentCodeName = saved->savedCodeName;
     ctx->currentCodeIndex = saved->savedCurrentCodeIndex;
     ctx->savearefBalance = saved->savedSavearefBalance;
@@ -4683,6 +4752,8 @@ BuiltinFunc VM_findBuiltin(VMContext* ctx, const char* name) {
 
 void VM_free(VMContext* ctx) {
     if (ctx == nullptr) return;
+    free(ctx->localsArena);
+    ctx->localsArena = nullptr;
 
     // Reset mutable runtime state
     VM_reset(ctx);

@@ -133,11 +133,14 @@ typedef struct CallFrame {
     uint8_t* savedBytecodeBase;
     RValue* savedLocals;
     uint32_t savedLocalsCount;
+    bool savedLocalVarsIsHeap;
     const char* savedCodeName;
     int32_t savedSavearefBalance;
     IntIntHashMap* savedCodeLocalsSlotMap;
     RValue* savedScriptArgs;
     int32_t savedScriptArgCount;
+    bool savedScriptArgsIsHeap;
+    uint32_t savedArenaTop;
     int32_t savedCurrentCodeIndex;
     struct CallFrame* parent;
 } CallFrame;
@@ -196,6 +199,7 @@ typedef struct { int32_t key; int32_t* value; } CrossRefMapEntry;
 // ===[ VMContext - Holds all VM state ]===
 // Fields are ordered by access frequency so that the hottest data sits in the first bytes of the struct
 // This way data can be kept "hot" in the CPU cache or, depending on the platform, in scratchpad RAM
+#define VM_LOCALS_ARENA_SIZE 2048
 struct VMContext {
     // Hot: touched every instruction in the dispatch loop
     uint8_t* bytecodeBase;
@@ -203,6 +207,7 @@ struct VMContext {
     uint32_t codeEnd;
     RValue* localVars;
     uint32_t localVarCount;
+    bool localVarsIsHeap;
     struct Instance* globalScopeInstance; // used when GLOB scripts are being executed, and used for the "global" reference
     struct Instance* currentInstance;
     struct Instance* otherInstance; // "other" instance for collision events
@@ -220,6 +225,9 @@ struct VMContext {
     EnvFrame* envStack; // Environment stack for with-statements (PushEnv/PopEnv)
     RValue* scriptArgs;       // Arguments passed to current script (nullptr for non-script code)
     int32_t scriptArgCount;   // Number of arguments passed
+    bool scriptArgsIsHeap;
+    uint32_t localsArenaTop;
+    RValue* localsArena;
     int32_t selfId;
     int32_t otherId;
     // Current event context (set by Runner_executeEvent, -1 when not in an event)
