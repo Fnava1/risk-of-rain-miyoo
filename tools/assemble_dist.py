@@ -25,7 +25,7 @@ ZIP_OUTPUT = os.path.join(DIST_DIR, "Risk_of_Rain_MiyooMiniPlus.zip")
 # Explicit blacklisted patterns / filenames to prevent packaging proprietary assets
 PROPRIETARY_BLACKLIST = {
     "data.win", "data_mmp.win", "Save.ini", "launch.log", ".installed",
-    "Risk of Rain.exe", "RiskofRain.exe"
+    "Risk of Rain.exe", "RiskofRain.exe", "butterscotch"
 }
 
 def is_blacklisted(filename: str) -> bool:

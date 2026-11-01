@@ -34,19 +34,19 @@ class TestSkillsLockFix(unittest.TestCase):
         with open(self.vm_builtins_path, 'r', encoding='utf-8', errors='ignore') as f:
             src = f.read()
 
-        # Check BUILTIN_VAR_ALARM getter
+        # Check BUILTIN_VAR_ALARM getter (must return -1.0 only for negative/inactive alarms, preserving 0 for active trigger frame)
         var_get_match = re.search(
-            r'case BUILTIN_VAR_ALARM:\s*\{[\s\S]*?int32_t a = inst->alarm\[arrayIndex\];\s*if\s*\(a\s*<=\s*0\)\s*return RValue_makeReal\(-1\.0\);[\s\S]*?return RValue_makeReal\(\(GMLReal\)\s*a\);',
+            r'case BUILTIN_VAR_ALARM:\s*\{[\s\S]*?int32_t a = inst->alarm\[arrayIndex\];\s*if\s*\(a\s*<\s*0\)\s*return RValue_makeReal\(-1\.0\);[\s\S]*?return RValue_makeReal\(\(GMLReal\)\s*a\);',
             src
         )
-        self.assertIsNotNone(var_get_match, "BUILTIN_VAR_ALARM getter must return -1.0 for a <= 0")
+        self.assertIsNotNone(var_get_match, "BUILTIN_VAR_ALARM getter must return -1.0 for a < 0")
 
         # Check builtin_alarm_get
         fn_get_match = re.search(
-            r'builtin_alarm_get\([\s\S]*?int32_t a = inst->alarm\[alarmIndex\];\s*if\s*\(a\s*<=\s*0\)\s*return RValue_makeReal\(-1\.0\);[\s\S]*?return RValue_makeReal\(\(GMLReal\)\s*a\);',
+            r'builtin_alarm_get\([\s\S]*?int32_t a = inst->alarm\[alarmIndex\];\s*if\s*\(a\s*<\s*0\)\s*return RValue_makeReal\(-1\.0\);[\s\S]*?return RValue_makeReal\(\(GMLReal\)\s*a\);',
             src
         )
-        self.assertIsNotNone(fn_get_match, "builtin_alarm_get must return -1.0 for a <= 0")
+        self.assertIsNotNone(fn_get_match, "builtin_alarm_get must return -1.0 for a < 0")
 
     def test_source_code_runner_countdown_checks_lte_zero(self):
         """Verify runner.c checks inst->alarm[alarmIdx] <= 0 on countdown."""
@@ -55,10 +55,10 @@ class TestSkillsLockFix(unittest.TestCase):
             src = f.read()
 
         runner_match = re.search(
-            r'inst->alarm\[alarmIdx\]--;\s*if\s*\(inst->alarm\[alarmIdx\]\s*<=\s*0\)\s*\{\s*inst->alarm\[alarmIdx\]\s*=\s*-1;\s*inst->activeAlarmMask\s*&=',
+            r'if\s*\(inst->alarm\[alarmIdx\]\s*>\s*0\)\s*\{[\s\S]*?inst->alarm\[alarmIdx\]--;[\s\S]*?if\s*\(inst->alarm\[alarmIdx\]\s*==\s*0\)[\s\S]*?else\s*\{[\s\S]*?inst->alarm\[alarmIdx\]\s*=\s*-1;\s*inst->activeAlarmMask\s*&=',
             src
         )
-        self.assertIsNotNone(runner_match, "runner.c must check alarm <= 0 to prevent negative underflow")
+        self.assertIsNotNone(runner_match, "runner.c must decrement alarms > 0, trigger at 0, and transition to -1 next step")
 
     def test_wicked_ring_crit_proc_simulation(self):
         """Simulate Wicked Ring crit procs on idle and near-ready skills."""
@@ -81,7 +81,7 @@ class TestSkillsLockFix(unittest.TestCase):
             def get_alarm(self, idx):
                 # Matching GMS / Butterscotch getter fix
                 val = self.alarm[idx]
-                if val <= 0:
+                if val < 0:
                     return -1
                 return val
 

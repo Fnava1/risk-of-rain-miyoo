@@ -885,7 +885,7 @@ RValue VMBuiltins_getVariable(VMContext* ctx, Instance* inst, int16_t builtinVar
             if (inst == nullptr) break;
             if (isValidAlarmIndex(arrayIndex)) {
                 int32_t a = inst->alarm[arrayIndex];
-                if (a <= 0) return RValue_makeReal(-1.0);
+                if (a < 0) return RValue_makeReal(-1.0);
                 return RValue_makeReal((GMLReal) a);
             }
             return RValue_makeReal(-1.0);
@@ -15698,7 +15698,7 @@ static RValue builtin_alarm_get(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE
     if (ctx->currentInstance != nullptr) {
         Instance* inst = ctx->currentInstance;
         int32_t a = inst->alarm[alarmIndex];
-        if (a <= 0) return RValue_makeReal(-1.0);
+        if (a < 0) return RValue_makeReal(-1.0);
         return RValue_makeReal((GMLReal) a);
     }
 

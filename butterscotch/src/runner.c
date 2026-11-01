@@ -5354,18 +5354,19 @@ void Runner_step(Runner* runner) {
                 }
 #endif
 
-                inst->alarm[alarmIdx]--;
-                if (inst->alarm[alarmIdx] <= 0) {
+                if (inst->alarm[alarmIdx] > 0) {
+                    inst->alarm[alarmIdx]--;
+                    if (inst->alarm[alarmIdx] == 0) {
+#ifdef ENABLE_VM_TRACING
+                        if (shgeti(runner->vmContext->alarmsToBeTraced, "*") != -1 || shgeti(runner->vmContext->alarmsToBeTraced, object->name) != -1) {
+                            logInfo("VM: [%s] Firing Alarm[%d] (instanceId=%d)\n", object->name, (int)alarmIdx, inst->instanceId);
+                        }
+#endif
+                        Runner_executeResolvedEvent(runner, inst, EVENT_ALARM, alarmIdx, codeId, ownerObjectIndex);
+                    }
+                } else {
                     inst->alarm[alarmIdx] = -1;
                     inst->activeAlarmMask &= (uint16_t) ~bit;
-
-#ifdef ENABLE_VM_TRACING
-                    if (shgeti(runner->vmContext->alarmsToBeTraced, "*") != -1 || shgeti(runner->vmContext->alarmsToBeTraced, object->name) != -1) {
-                        logInfo("VM: [%s] Firing Alarm[%d] (instanceId=%d)\n", object->name, (int)alarmIdx, inst->instanceId);
-                    }
-#endif
-
-                    Runner_executeResolvedEvent(runner, inst, EVENT_ALARM, alarmIdx, codeId, ownerObjectIndex);
                 }
             }
 
