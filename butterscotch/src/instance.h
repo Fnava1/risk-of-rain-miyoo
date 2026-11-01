@@ -35,7 +35,7 @@ struct Instance {
     float x, y;
     float xprevious, yprevious;
     float xstart, ystart;
-    bool persistent, solid, active, destroyed, visible, createEventFired, outsideRoom, spatialGridDirty, mouseOver;
+    bool persistent, solid, active, destroyed, visible, createEventFired, outsideRoom, spatialGridDirty, mouseOver, sectorHibernated;
     // Used to track which alarms are set without looping through the entire alarm array
     uint16_t activeAlarmMask;
     bool cleanupEventFired;

@@ -9,6 +9,7 @@
 #include "real_type.h"
 #include "renderer.h"
 #include "runner.h"
+#include "native_level_subsystem.h"
 #include "runner_gamepad.h"
 #include "matrix_math.h"
 #include "utils.h"
@@ -7439,6 +7440,11 @@ static bool placeFreeAt(Runner* runner, Instance* caller, GMLReal testX, GMLReal
     bool free = true;
 
     if (callerBBox.valid) {
+        if (NCLP_checkSolid(runner, callerBBox.left, callerBBox.top, callerBBox.right, callerBBox.bottom)) {
+            caller->x = savedX;
+            caller->y = savedY;
+            return false;
+        }
         if (runner->spatialGrid != nullptr) {
             SpatialGridQuery query = SpatialGrid_prepareQuery(runner, callerBBox.left, callerBBox.top, callerBBox.right, callerBBox.bottom, INSTANCE_ALL);
 

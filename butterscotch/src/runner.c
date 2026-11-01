@@ -11,6 +11,7 @@
 #include "video.h"
 #include "fmod/fmod.h"
 #include "net/net_socket.h"
+#include "native_level_subsystem.h"
 
 #include <stdint.h>
 #include "stdio_compat.h"
@@ -466,6 +467,10 @@ static bool isEventBlockedByPendingRoom(Runner* runner, Instance* instance, int3
 static void Runner_executeResolvedEvent(Runner* runner, Instance* instance, int32_t eventType, int32_t eventSubtype, int32_t codeId, int32_t ownerObjectIndex) {
     if (isEventBlockedByPendingRoom(runner, instance, eventType) || runner->shouldExit)
         return;
+
+    if (NCLP_overrideEvent(runner, instance, eventType, eventSubtype, codeId, ownerObjectIndex)) {
+        return;
+    }
 
     VMContext* vm = runner->vmContext;
     int32_t savedEventType = vm->currentEventType;
@@ -2957,6 +2962,7 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
     }
 
     Runner_reset(runner);
+    NCLP_init(runner);
 
     populateObjectsWithAnyEventOfType(runner);
 
@@ -3449,6 +3455,7 @@ void Runner_initFirstRoom(Runner* runner) {
 
     // Initialize the first room
     initRoom(runner, firstRoomIndex);
+    NCLP_onRoomStart(runner);
 
     // Fire Game Start for all instances
     Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_GAME_START);
@@ -4475,6 +4482,7 @@ void Runner_handlePendingRoomChange(Runner* runner) {
             for (int i = 0; i < 5; i++) runner->debug_boss_ids[i] = -1;
         }
 
+        NCLP_onRoomEnd(runner);
         // Fire Room End for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_END);
         if (runner->renderer && runner->renderer->vtable && runner->renderer->vtable->onRoomEnd) {
@@ -4492,6 +4500,7 @@ void Runner_handlePendingRoomChange(Runner* runner) {
 
         // Load new room
         initRoom(runner, newRoomIndex);
+        NCLP_onRoomStart(runner);
 
         // Free the outgoing room's payload after Cleanup and persistent-instance layer transfer.
         if (runner->dataWin->lazyLoadRooms && !oldRoom->eagerlyLoaded && newRoomIndex != oldRoomIndex) {
@@ -5343,6 +5352,8 @@ void Runner_step(Runner* runner) {
         }
     }
 #endif
+
+    NCLP_step(runner);
 
     // Execute Begin Step for all instances
     Runner_executeEventForAll(runner, EVENT_STEP, STEP_BEGIN);

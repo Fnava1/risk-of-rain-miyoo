@@ -957,6 +957,17 @@ struct Runner {
     float debug_box_pos[4][2];
     int32_t debug_boss_ids[5];
     float debug_boss_pos[5][2];
+
+    // Native Console Level Pipeline (NCLP)
+    bool sector_hibernation_active;
+    int32_t current_active_sector;
+    uint8_t* room_solid_bitmask;
+    uint32_t room_bitmask_w;
+    uint32_t room_bitmask_h;
+    int32_t nclp_wurmBodyObjIndex;
+    int32_t nclp_wurmHeadObjIndex;
+    int32_t nclp_guardBulletObjIndex;
+    int32_t nclp_wurmMissileObjIndex;
 };
 
 void runner_spawn_debug_hub(Runner* runner, Instance* playerInst);
