@@ -1128,7 +1128,7 @@ static void drawInstanceNormally(Runner* runner, Instance* inst) {
                                      inst->objectIndex >= 0 &&
                                      (uint32_t)inst->objectIndex < runner->dataWin->objt.count &&
                                      runner->isVisualEffectObject[inst->objectIndex]);
-            if (isCullableEffect &&
+            if ((inst->objectIndex == runner->explosionObjIndex || isCullableEffect) &&
                 runner->activeViewValid && !runner->inGuiPass && !isNonGameplayRoom(runner->currentRoom)) {
                 float margin = 96.0f;
                 float absScaleX = fabsf(inst->imageXscale);
@@ -2804,16 +2804,16 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
     repeat(dataWin->objt.count, oi) {
         if (dataWin->objt.objects[oi].name) {
             const char* oname = dataWin->objt.objects[oi].name;
-            if (strcmp(oname, "oEfDamage") == 0) {
+            if (strcmp(dataWin->objt.objects[oi].name, "oEfDamage") == 0) {
                 runner->damageObjIndex = (int32_t)oi;
                 runner->isVisualEffectObject[oi] = true;
-            } else if (strcmp(oname, "oExplosion") == 0) {
+            } else if (strcmp(dataWin->objt.objects[oi].name, "oExplosion") == 0) {
                 runner->explosionObjIndex = (int32_t)oi;
                 runner->isVisualEffectObject[oi] = true;
-            } else if (strcmp(oname, "oEfTrail") == 0) {
+            } else if (strcmp(dataWin->objt.objects[oi].name, "oEfTrail") == 0) {
                 runner->efTrailObjIndex = (int32_t)oi;
                 runner->isVisualEffectObject[oi] = true;
-            } else if (strcmp(oname, "oGuardBullet") == 0) {
+            } else if (strcmp(dataWin->objt.objects[oi].name, "oGuardBullet") == 0) {
                 runner->guardBulletObjIndex = (int32_t)oi;
             } else if (strcmp(oname, "oEfGold") == 0 ||
                        strcmp(oname, "oEfExp") == 0 ||
