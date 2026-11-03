@@ -3,6 +3,9 @@
 #include "data_win.h"
 #include "vm.h"
 #include "loop.h"
+#if defined(USE_TREMOR_AUDIO)
+#include "../../src/audio/audio_tremor.h"
+#endif
 
 #include "platformdefs.h"
 #include "stdio_compat.h"
@@ -518,6 +521,10 @@ static void PreProcessedStuff_free(void) {
 
 // ===[ MAIN ]===
 int loop(CommandLineArgs args, const char *argv0) {
+#if defined(USE_TREMOR_AUDIO)
+    audio_stream_init();
+#endif
+
 #ifdef _WIN32
     timeBeginPeriod(1);
 #endif
@@ -598,6 +605,12 @@ int loop(CommandLineArgs args, const char *argv0) {
         options.lazyLoadAudio = args.lazyAudio;
         options.eagerlyLoadedRooms = args.eagerRooms;
         DataWin* dataWin = DataWin_parse(currentDataWinPath, options);
+
+#if defined(PLATFORM_MIYOO) || defined(USE_SDL1_AUDIO)
+        // Preload combat and frequent SFX (<= 200 KB) into RAM.
+        // This eliminates MicroSD seek latencies during intense combat (Spite cascade, drone swarms).
+        DataWin_preloadHotAudio(dataWin, 200 * 1024);
+#endif
 
         Gen8* gen8 = &dataWin->gen8;
         logInfo("Loaded \"%s\" (%d) successfully! [WAD Version %u / GameMaker version %u.%u.%u.%u]\n", gen8->name, gen8->gameID, gen8->wadVersion, dataWin->detectedFormat.major, dataWin->detectedFormat.minor, dataWin->detectedFormat.release, dataWin->detectedFormat.build);

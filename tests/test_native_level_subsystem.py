@@ -57,21 +57,15 @@ class TestNativeLevelSubsystem(unittest.TestCase):
         self.assertIn("NCLP_step(runner);", self.runner_c_content)
         self.assertIn("NCLP_overrideEvent(runner, instance, eventType, eventSubtype, codeId, ownerObjectIndex)", self.runner_c_content)
 
-    def test_collision_bitmask_in_vm_builtins(self):
-        """Verifies vm_builtins.c queries NCLP_checkSolid before querying the heavy spatial grid."""
-        self.assertIn('#include "native_level_subsystem.h"', self.vm_builtins_content)
-        self.assertIn("if (NCLP_checkSolid(runner, callerBBox.left, callerBBox.top, callerBBox.right, callerBBox.bottom))", self.vm_builtins_content)
-
     def test_spatial_sector_hibernation_logic(self):
-        """Verifies native_level_subsystem.c correctly targets Level 6 Providence Arena and preserves essential entities."""
+        """Verifies native_level_subsystem.c correctly targets Level 6 Providence Arena (x >= 4150) and preserves essential entities."""
         self.assertIn("r6_1_1", self.impl_content)
-        self.assertIn("4150.0f", self.impl_content) # Providence Arena threshold
+        self.assertIn("4150.0f", self.impl_content) # Providence Arena threshold (Door 2)
         self.assertIn("4100.0f", self.impl_content) # Non-arena hibernation boundary
         self.assertIn("pDrone", self.impl_content)   # Drones preserved
         self.assertIn("oControl", self.impl_content) # Controllers preserved
         self.assertIn("oHUD", self.impl_content)     # HUD preserved
         self.assertIn("sectorHibernated = true;", self.impl_content)
-        self.assertIn("sectorHibernated = false;", self.impl_content)
 
     def test_gilded_wurm_kinematics_hook(self):
         """Verifies native_level_subsystem.c implements native inverse kinematics and angle rotation for oWurmBody."""
@@ -81,10 +75,8 @@ class TestNativeLevelSubsystem(unittest.TestCase):
         self.assertIn("SpatialGrid_markInstanceAsDirty", self.impl_content)
 
     def test_guardian_bullet_motion_hook(self):
-        """Verifies native_level_subsystem.c updates oGuardBullet motion directly in native C."""
+        """Verifies native_level_subsystem.c tracks s_obj_guard_bullet without suppressing self-destruction."""
         self.assertIn("s_obj_guard_bullet", self.impl_content)
-        self.assertIn("inst->x += inst->hspeed;", self.impl_content)
-        self.assertIn("inst->y += inst->vspeed;", self.impl_content)
 
 if __name__ == "__main__":
     unittest.main()

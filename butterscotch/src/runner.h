@@ -742,6 +742,10 @@ struct Runner {
     int32_t efTrailObjIndex;
     int32_t guardBulletObjIndex;
     bool* isVisualEffectObject;
+    bool* isEnemyObject;
+    bool* isBossObject;
+    bool* isDroneObject;
+    bool* isArtifact8BoxObject;
     float handheldScale;
     uint32_t nextInstanceId;
     RunnerKeyboardState* keyboard;
@@ -817,6 +821,7 @@ struct Runner {
     Drawable* cachedDynamicDrawables; // stb_ds array
     Drawable* cachedRoomTiles; // stb_ds array
     int32_t cachedRoomTilesRoomIndex;
+    bool cachedRoomTilesSectorHibernated;
     bool inDrawLoop;
     bool drawableListStructureDirty;
     bool drawableListSortDirty;

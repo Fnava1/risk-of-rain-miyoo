@@ -736,6 +736,8 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
         if (ctx->otherInstance != nullptr) {
             targetInstance = (Instance*) ctx->otherInstance;
         }
+    } else if (instanceType == INSTANCE_NOONE) {
+        return RValue_makeReal(0.0);
 #if IS_WAD17_OR_HIGHER_ENABLED
     } else if (instanceType == INSTANCE_STATIC) {
         // "static" scope: read from the current constructor's shared static struct via the normal slot path below.
@@ -1024,6 +1026,8 @@ static void resolveVariableWrite(VMContext* ctx, int32_t instanceType, uint32_t 
         if (ctx->otherInstance != nullptr) {
             targetInstance = (Instance*) ctx->otherInstance;
         }
+    } else if (instanceType == INSTANCE_NOONE) {
+        return;
     } else if (IS_WAD17_OR_HIGHER(ctx) && instanceType == INSTANCE_ARG) {
         // BC17: write to argument0..argument15 via INSTANCE_ARG instance type (builtinVarId pre-resolved at parse time)
         int16_t bid = varDef->builtinVarId;
@@ -4034,6 +4038,13 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex) {
 RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t argCount) {
     require(codeIndex >= 0 && ctx->dataWin->code.count > (uint32_t) codeIndex);
     CodeEntry* code = &ctx->dataWin->code.entries[codeIndex];
+
+    // Fast-path: pal_swap is a shader-only palette swap system used by enemies in draw_ai_default.
+    // On the software renderer (Miyoo Mini), shaders are not compiled/supported (swShaderIsCompiled returns false),
+    // so executing 1KB+ of GML DS lookups per enemy per frame is pure overhead.
+    if (code->name && strncmp(code->name, "gml_Script_pal_swap", 19) == 0) {
+        return RValue_makeReal(0.0);
+    }
 
     // Save current frame
     CallFrame frame = {0};

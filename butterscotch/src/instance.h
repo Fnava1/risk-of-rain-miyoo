@@ -38,6 +38,7 @@ struct Instance {
     bool persistent, solid, active, destroyed, visible, createEventFired, outsideRoom, spatialGridDirty, mouseOver, sectorHibernated;
     // Used to track which alarms are set without looping through the entire alarm array
     uint16_t activeAlarmMask;
+    uint8_t outsideViewMask;
     bool cleanupEventFired;
     int32_t maskIndex; // collision mask sprite override (-1 = use spriteIndex)
     int32_t* collisionCells; // Used to track where we are

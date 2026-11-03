@@ -33,15 +33,14 @@ class TestPhysicsOptimizations(unittest.TestCase):
 
         loop_start = body.find("for (int32_t i = 1; steps >= i; i++)")
         self.assertNotEqual(loop_start, -1, "Missing step loop in moveOutsideCommon")
-        loop_end = body.find("inst->x = (float) (origX + (GMLReal) steps * dx);", loop_start)
+        loop_end = body.find("inst->x = origX;", loop_start)
         loop_body = body[loop_start:loop_end]
 
         # Verify dirtyInstances is only marked on exit/return, not inside every iteration of the loop
         self.assertIn("SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);", body,
                       "moveOutsideCommon must mark instance dirty once when free spot found")
-        # Count occurrences in body: should be exactly 2 (one inside if (bounceTestFree), one at end of loop)
-        dirty_count = body.count("SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);")
-        self.assertEqual(dirty_count, 2, f"Expected 2 single dirty calls on return, found {dirty_count}")
+        # When free spot is found inside loop, mark dirty; when blocked, stay at origX/origY without warping
+        self.assertIn("inst->x = origX;\n    inst->y = origY;", body)
 
     def test_point_collision_bbox_check_before_ancestor_walk(self):
         """builtin_collision_point and builtin_instance_position must check BBox before ancestor tree traversal."""

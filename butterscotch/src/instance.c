@@ -33,6 +33,7 @@ Instance* Instance_create(uint32_t instanceId, int32_t objectIndex, GMLReal x, G
     inst->visible = true;
     inst->destroyed = false;
     inst->outsideRoom = false;
+    inst->outsideViewMask = 0;
     inst->spatialGridDirty = false;
     inst->spriteIndex = -1;
     inst->imageSpeed = 1.0f;
@@ -115,6 +116,7 @@ void Instance_copyFields(Instance* source, Instance* destination) {
     destination->active = source->active;
     destination->visible = source->visible;
     destination->outsideRoom = source->outsideRoom;
+    destination->outsideViewMask = source->outsideViewMask;
     destination->maskIndex = source->maskIndex;
     destination->spriteIndex = source->spriteIndex;
     destination->imageSpeed = source->imageSpeed;

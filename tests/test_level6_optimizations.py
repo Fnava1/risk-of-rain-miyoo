@@ -127,8 +127,8 @@ class TestLevel6Optimizations(unittest.TestCase):
         self.assertIn("return true;", func_body,
                       "particleSpawnAt must return true when culled to avoid caller early break")
 
-    def test_move_contact_unhang_stuck_instances(self):
-        """moveContactCommon must attempt vertical unsticking if instance starts embedded inside solid blocks."""
+    def test_move_contact_solid_standard_gms_compliance(self):
+        """moveContactCommon must comply with standard GM:S 1.4: never artificially teleport instances upwards."""
         path = os.path.join(self.butterscotch_src, "vm_builtins.c")
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             src = f.read()
@@ -138,12 +138,12 @@ class TestLevel6Optimizations(unittest.TestCase):
         func_end = src.find("static RValue builtin_move_contact_solid(", func_start)
         func_body = src[func_start:func_end]
 
-        self.assertIn("unstick it vertically upwards into free space", func_body,
-                      "moveContactCommon must document vertical unsticking")
-        self.assertIn("bounceTestFree(runner, inst, inst->x, inst->y - (GMLReal) up, useall)", func_body,
-                      "moveContactCommon must test vertical step upward")
-        self.assertIn("inst->y -= (float) up;", func_body,
-                      "moveContactCommon must apply vertical unsticking step")
+        self.assertIn("Standard GameMaker Studio 1.4 behavior", func_body,
+                      "moveContactCommon must document GM:S 1.4 standard behavior")
+        self.assertNotIn("inst->y -= (float) up;", func_body,
+                         "moveContactCommon must never artificially move instances upwards")
+        self.assertNotIn("for (int32_t up = 16;", func_body,
+                         "moveContactCommon must not contain unhang loop")
 
 
 if __name__ == "__main__":

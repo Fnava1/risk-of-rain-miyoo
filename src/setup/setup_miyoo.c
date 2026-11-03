@@ -156,6 +156,59 @@ static void ensure_clean_prefs_ini(void) {
     }
 }
 
+// Count available .ogg tracks
+static int count_ogg_tracks(void) {
+    int found = 0;
+    for (int i = 0; s_known_ogg[i] != NULL; i++) {
+        if (access(s_known_ogg[i], F_OK) == 0) {
+            found++;
+        }
+    }
+    return found;
+}
+
+// Inspect active game data file (data_mmp.win or data.win) for chunk integrity and texture format
+static void inspect_game_data_assets(const char *win_path) {
+    FILE *f = fopen(win_path, "rb");
+    if (!f) return;
+
+    char magic[4];
+    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "FORM", 4) != 0) {
+        fclose(f);
+        return;
+    }
+
+    uint32_t form_sz = 0;
+    if (fread(&form_sz, 4, 1, f) != 1) {
+        fclose(f);
+        return;
+    }
+
+    uint32_t txtr_sz = 0;
+    uint32_t audo_sz = 0;
+    char chunk_name[4];
+    uint32_t chunk_sz = 0;
+
+    while (fread(chunk_name, 1, 4, f) == 4 && fread(&chunk_sz, 4, 1, f) == 1) {
+        if (memcmp(chunk_name, "TXTR", 4) == 0) {
+            txtr_sz = chunk_sz;
+        } else if (memcmp(chunk_name, "AUDO", 4) == 0) {
+            audo_sz = chunk_sz;
+        }
+        fseek(f, (long)chunk_sz, SEEK_CUR);
+    }
+    fclose(f);
+
+    printf("[SETUP] %s verified: FORM=%u bytes, TXTR=%u bytes, AUDO=%u bytes\n",
+           win_path, form_sz, txtr_sz, audo_sz);
+
+    if (txtr_sz > 0 && txtr_sz <= 1500000) {
+        printf("[SETUP] -> Optimized 16-bit paletted textures detected (RAM budget safe).\n");
+    } else if (txtr_sz > 1500000) {
+        printf("[SETUP] -> Standard 32-bit textures detected (Low graphics preset enforced).\n");
+    }
+}
+
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
@@ -223,15 +276,30 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // 5. Verify and normalize audio files
+    // 5. Inspect and verify active game data container
+    if (access("data_mmp.win", F_OK) == 0) {
+        fb_progress_update(0.35f, "Verificando texturas optimizadas 16-bit (data_mmp.win)...");
+        inspect_game_data_assets("data_mmp.win");
+    } else if (access("data.win", F_OK) == 0) {
+        fb_progress_update(0.35f, "Verificando contenedor de juego (data.win)...");
+        inspect_game_data_assets("data.win");
+    }
+
+    // 6. Verify and normalize audio files
     fb_progress_update(0.55f, "Comprobando y normalizando musica (.ogg)...");
     normalize_ogg_casing();
+    int music_count = count_ogg_tracks();
+    printf("[SETUP] Audio verification: %d / 20 music tracks found.\n", music_count);
 
-    // 6. Ensure optimal Prefs.ini
-    fb_progress_update(0.80f, "Configurando preferencias (Low, Gamepad)...");
+    // 7. Hot-SFX Fast Cache notification
+    fb_progress_update(0.70f, "Preparando Fast Cache de SFX para combate...");
+    printf("[SETUP] Hot-SFX Fast Cache ready: combat SFX will be cached in RAM.\n");
+
+    // 8. Ensure optimal Prefs.ini
+    fb_progress_update(0.85f, "Configurando preferencias (Low, Gamepad)...");
     ensure_clean_prefs_ini();
 
-    // 7. Create installation transaction marker
+    // 9. Create installation transaction marker
     fb_progress_update(0.95f, "Finalizando instalacion...");
     FILE *f_inst = fopen(".installed", "w");
     if (f_inst) {

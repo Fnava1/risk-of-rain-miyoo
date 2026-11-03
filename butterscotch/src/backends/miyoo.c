@@ -31,6 +31,8 @@
 #include <sys/mman.h>
 #include <linux/fb.h>
 #include <linux/input.h>
+#include <signal.h>
+#include "savestate.h"
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
@@ -897,11 +899,22 @@ static void* mmp_clock_guard_worker(void* arg) {
 
 // ===[ Butterscotch Platform API ]===
 
+static void miyoo_exit_signal_handler(int sig) {
+    (void)sig;
+    if (g_runner && SaveState_canSave(g_runner)) {
+        SaveState_save(g_runner);
+    }
+    _exit(0);
+}
+
 bool platformInit(int32_t reqW, int32_t reqH, const char *title, bool headless) {
     (void)reqW;
     (void)reqH;
     (void)title;
     (void)headless;
+
+    signal(SIGTERM, miyoo_exit_signal_handler);
+    signal(SIGINT, miyoo_exit_signal_handler);
 
     logInfo("Miyoo platform backend initializing (%dx%d)...\n", SCREEN_WIDTH, SCREEN_HEIGHT);
     mmp_fb_init("/dev/fb0");
@@ -1566,6 +1579,13 @@ bool platformHandleEvents(void) {
 
     if (exit_requested) {
         logInfo("Miyoo: Exit requested by user (MENU or START+SELECT).\n");
+        if (SaveState_canSave(g_runner)) {
+            logInfo("Miyoo: Active gameplay run detected, writing autosave.state...\n");
+            SaveState_save(g_runner);
+        } else {
+            logInfo("Miyoo: Non-gameplay room or player dead, deleting stale autosave...\n");
+            SaveState_delete();
+        }
         return true;
     }
 

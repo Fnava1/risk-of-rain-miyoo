@@ -5,6 +5,10 @@
 #include <string.h>
 #include "stb_ds.h"
 
+#if defined(USE_TREMOR_AUDIO)
+#include "../../../../src/audio/audio_tremor.h"
+#endif
+
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 #endif
@@ -26,6 +30,14 @@ static void sdlAudioCallback(void* userdata, Uint8* stream, int len) {
         return;
     }
 
+    #if defined(USE_TREMOR_AUDIO)
+    if (audio_stream_available_bytes() > 0) {
+        size_t tremorBytes = audio_stream_read_pcm(stream, (size_t)len);
+        if (tremorBytes >= (size_t)len) return;
+        stream += tremorBytes;
+        len -= (int)tremorBytes;
+    }
+#endif
     int channels = sa->sdlSpec.channels > 0 ? sa->sdlSpec.channels : 2;
     int16_t* out = (int16_t*) stream;
     int framesLeft = len / (int) (channels * sizeof(int16_t));

@@ -974,5 +974,6 @@ void GamePath_computeInternal(GamePath* path);
 PathPositionResult GamePath_getPosition(GamePath* path, float t);
 void DataWin_loadTxtrIfNeeded(DataWin* dw, uint32_t textureId);
 void DataWin_loadAudoIfNeeded(DataWin* dw, uint32_t audioEntryId);
+void DataWin_preloadHotAudio(DataWin* dw, uint32_t maxSizeBytes);
 
 #endif /* _BS_DATA_WIN_H_ */

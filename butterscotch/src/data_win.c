@@ -2819,6 +2819,38 @@ void DataWin_loadAudoIfNeeded(DataWin* dw, uint32_t audioEntryId) {
     }
 }
 
+void DataWin_preloadHotAudio(DataWin* dw, uint32_t maxSizeBytes) {
+    if (!dw || !dw->lazyLoadFile) return;
+    Audo* a = &dw->audo;
+    if (!a->entries || a->count == 0) return;
+
+    uint32_t preloaded = 0;
+    size_t totalBytes = 0;
+    long old_seek = ftell(dw->lazyLoadFile);
+
+    for (uint32_t i = 0; i < a->count; i++) {
+        AudioEntry* entry = &a->entries[i];
+        if (entry->present && entry->data == nullptr && entry->dataSize > 0 && entry->dataSize <= maxSizeBytes) {
+            entry->data = (uint8_t *)safeMalloc(entry->dataSize);
+            fseek(dw->lazyLoadFile, entry->dataOffset, SEEK_SET);
+            size_t r = fread(entry->data, 1, entry->dataSize, dw->lazyLoadFile);
+            if (r == entry->dataSize) {
+                preloaded++;
+                totalBytes += entry->dataSize;
+            } else {
+                logWarn("DataWin_preloadHotAudio: failed to read audio entry %u (%zu vs %u bytes)\n",
+                        i, r, entry->dataSize);
+                free(entry->data);
+                entry->data = nullptr;
+            }
+        }
+    }
+    fseek(dw->lazyLoadFile, old_seek, SEEK_SET);
+
+    logInfo("Audio: Hot-SFX Fast Cache preloaded %u / %u entries (%.2f MB) into RAM\n",
+            preloaded, a->count, (float)totalBytes / (1024.0f * 1024.0f));
+}
+
 // ===[ MAIN PARSE FUNCTION ]===
 
 DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {

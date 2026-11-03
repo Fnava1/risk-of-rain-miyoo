@@ -26,18 +26,35 @@ typedef struct {
 
 // Returns the collision sprite for an instance (mask sprite if set, else display sprite)
 static inline Sprite* Collision_getSprite(DataWin* dataWin, Instance* inst) {
-    int32_t sprIdx = (inst->maskIndex >= 0) ? inst->maskIndex : inst->spriteIndex;
-    if (0 > sprIdx || (uint32_t) sprIdx >= dataWin->sprt.count) {
-        if (inst->objectIndex >= 0 && (uint32_t)inst->objectIndex < dataWin->objt.count) {
-            GameObject* obj = &dataWin->objt.objects[inst->objectIndex];
-            int32_t defIdx = (obj->textureMaskId >= 0) ? obj->textureMaskId : obj->spriteId;
-            if (defIdx >= 0 && (uint32_t)defIdx < dataWin->sprt.count) {
-                return &dataWin->sprt.sprites[defIdx];
-            }
-        }
-        return nullptr;
+    if (inst == nullptr || dataWin == nullptr) return nullptr;
+
+    // 1. Explicit instance mask override
+    if (inst->maskIndex >= 0 && (uint32_t)inst->maskIndex < dataWin->sprt.count) {
+        return &dataWin->sprt.sprites[inst->maskIndex];
     }
-    return &dataWin->sprt.sprites[sprIdx];
+
+    // 2. Object definition assigned collision mask
+    if (inst->objectIndex >= 0 && (uint32_t)inst->objectIndex < dataWin->objt.count) {
+        GameObject* obj = &dataWin->objt.objects[inst->objectIndex];
+        if (obj->textureMaskId >= 0 && (uint32_t)obj->textureMaskId < dataWin->sprt.count) {
+            return &dataWin->sprt.sprites[obj->textureMaskId];
+        }
+    }
+
+    // 3. Current instance display sprite
+    if (inst->spriteIndex >= 0 && (uint32_t)inst->spriteIndex < dataWin->sprt.count) {
+        return &dataWin->sprt.sprites[inst->spriteIndex];
+    }
+
+    // 4. Object definition fallback sprite
+    if (inst->objectIndex >= 0 && (uint32_t)inst->objectIndex < dataWin->objt.count) {
+        GameObject* obj = &dataWin->objt.objects[inst->objectIndex];
+        if (obj->spriteId >= 0 && (uint32_t)obj->spriteId < dataWin->sprt.count) {
+            return &dataWin->sprt.sprites[obj->spriteId];
+        }
+    }
+
+    return nullptr;
 }
 
 // Computes the axis-aligned bounding box for an instance using its collision sprite

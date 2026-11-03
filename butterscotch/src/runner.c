@@ -12,6 +12,7 @@
 #include "fmod/fmod.h"
 #include "net/net_socket.h"
 #include "native_level_subsystem.h"
+#include "savestate.h"
 
 #include <stdint.h>
 #include "stdio_compat.h"
@@ -468,6 +469,20 @@ static void Runner_executeResolvedEvent(Runner* runner, Instance* instance, int3
     if (isEventBlockedByPendingRoom(runner, instance, eventType) || runner->shouldExit)
         return;
 
+    // Distance-Aware AI Navigation Decimation for regular enemies
+    if (eventType == EVENT_STEP && eventSubtype == STEP_NORMAL) {
+        if (runner->isEnemyObject && instance->objectIndex >= 0 &&
+            (uint32_t)instance->objectIndex < runner->dataWin->objt.count &&
+            runner->isEnemyObject[instance->objectIndex]) {
+            // Bosses always run at 60 Hz full precision; regular enemies decimate off-screen
+            if (!runner->isBossObject || !runner->isBossObject[instance->objectIndex]) {
+                if (NCLP_shouldThrottleNPC(runner, instance)) {
+                    return;
+                }
+            }
+        }
+    }
+
     if (NCLP_overrideEvent(runner, instance, eventType, eventSubtype, codeId, ownerObjectIndex)) {
         return;
     }
@@ -912,12 +927,16 @@ static void rebuildDrawableCacheIfDirty(Runner* runner) {
             return;
         }
 
-        // 1. Build and sort static room tiles ONCE per room transition
+        // 1. Build and sort static room tiles ONCE per room transition (or when sector hibernation activates)
         if (!DataWin_isVersionAtLeast(runner->dataWin, 2, 0, 0, 0)) {
-            if (runner->cachedRoomTilesRoomIndex != runner->currentRoomIndex) {
+            bool hibStateChanged = (runner->sector_hibernation_active != runner->cachedRoomTilesSectorHibernated);
+            if (runner->cachedRoomTilesRoomIndex != runner->currentRoomIndex || hibStateChanged) {
                 arrsetlen(runner->cachedRoomTiles, 0);
                 repeat(room->tileCount, i) {
                     RoomTile* tile = &room->tiles[i];
+                    if (runner->sector_hibernation_active && tile->x < 4000) {
+                        continue;
+                    }
                     Drawable d;
                     ZERO_STRUCT(d);
                     d.type = DRAWABLE_TILE;
@@ -930,6 +949,7 @@ static void rebuildDrawableCacheIfDirty(Runner* runner) {
                     qsort(runner->cachedRoomTiles, tCount, sizeof(Drawable), compareDrawables);
                 }
                 runner->cachedRoomTilesRoomIndex = runner->currentRoomIndex;
+                runner->cachedRoomTilesSectorHibernated = runner->sector_hibernation_active;
             }
         }
 
@@ -1064,6 +1084,9 @@ static bool isNonGameplayRoom(Room* room) {
 }
 
 static bool isArtifact8Box(Runner* runner, int32_t objectIndex) {
+    if (runner->isArtifact8BoxObject != nullptr && objectIndex >= 0 && (uint32_t)objectIndex < runner->dataWin->objt.count) {
+        return runner->isArtifact8BoxObject[objectIndex];
+    }
     if (runner->dataWin == nullptr) return false;
     int32_t currentObj = objectIndex;
     while (currentObj >= 0 && (uint32_t)currentObj < runner->dataWin->objt.count) {
@@ -1194,29 +1217,44 @@ void Runner_draw(Runner* runner) {
 
     // Draw interleaved tiles and instances in a clean linear pass
     runner->inDrawLoop = true;
+    bool hasTileLayerMap = (runner->tileLayerMap != nullptr && hmlen(runner->tileLayerMap) > 0);
+    int32_t viewX0 = (int32_t)runner->activeViewX;
+    int32_t viewY0 = (int32_t)runner->activeViewY;
+    int32_t viewX1 = viewX0 + (int32_t)runner->activeViewW;
+    int32_t viewY1 = viewY0 + (int32_t)runner->activeViewH;
+
     repeat(drawableCount, i) {
         Drawable* d = &runner->cachedDrawables[i];
 
         if (d->type == DRAWABLE_TILE) {
             if (runner->renderer != nullptr) {
                 RoomTile* tile = &room->tiles[d->tileIndex];
-                // Skip tiles whose layer was hidden via tile_layer_hide(). Filtered here (not in the cache) so toggling layer visibility doesn't invalidate.
-                ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
-                if (layerIdx >= 0 && !runner->tileLayerMap[layerIdx].value.visible) continue;
                 float offsetX = 0.0f, offsetY = 0.0f;
-                if (layerIdx >= 0) {
-                    offsetX = runner->tileLayerMap[layerIdx].value.offsetX;
-                    offsetY = runner->tileLayerMap[layerIdx].value.offsetY;
+                // Skip tiles whose layer was hidden via tile_layer_hide(). Filtered here (not in the cache) so toggling layer visibility doesn't invalidate.
+                if (hasTileLayerMap) {
+                    ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
+                    if (layerIdx >= 0 && !runner->tileLayerMap[layerIdx].value.visible) continue;
+                    if (layerIdx >= 0) {
+                        offsetX = runner->tileLayerMap[layerIdx].value.offsetX;
+                        offsetY = runner->tileLayerMap[layerIdx].value.offsetY;
+                    }
                 }
 
                 if (runner->activeViewValid) {
-                    float tileLeft = (float) tile->x + offsetX;
-                    float tileTop = (float) tile->y + offsetY;
-                    float tileRight = tileLeft + (float) tile->width;
-                    float tileBottom = tileTop + (float) tile->height;
-                    if (tileRight < runner->activeViewX || tileLeft > runner->activeViewX + runner->activeViewW ||
-                        tileBottom < runner->activeViewY || tileTop > runner->activeViewY + runner->activeViewH) {
-                        continue;
+                    if (offsetX == 0.0f && offsetY == 0.0f) {
+                        if (tile->x + (int32_t)tile->width < viewX0 || tile->x > viewX1 ||
+                            tile->y + (int32_t)tile->height < viewY0 || tile->y > viewY1) {
+                            continue;
+                        }
+                    } else {
+                        float tileLeft = (float) tile->x + offsetX;
+                        float tileTop = (float) tile->y + offsetY;
+                        float tileRight = tileLeft + (float) tile->width;
+                        float tileBottom = tileTop + (float) tile->height;
+                        if (tileRight < runner->activeViewX || tileLeft > runner->activeViewX + runner->activeViewW ||
+                            tileBottom < runner->activeViewY || tileTop > runner->activeViewY + runner->activeViewH) {
+                            continue;
+                        }
                     }
                 }
 
@@ -1434,6 +1472,9 @@ void Runner_draw(Runner* runner) {
     runner->inDrawLoop = false;
 
     fireDrawSubtype(runner, runner->cachedDrawables, drawableCount, DRAW_END);
+
+    // Draw native damage text particles in world space above instances, before GUI
+    NCLP_drawDamageText(runner);
 
     // Draw foreground backgrounds (in front of instances, behind GUI)
     drawGMS1Backgrounds(runner, true);
@@ -1878,6 +1919,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     runner->viewsEnabled = (room->flags & 1) != 0;
     // Tile set, runtime layers, and instance list all change when entering a room.
     runner->cachedRoomTilesRoomIndex = -1;
+    runner->cachedRoomTilesSectorHibernated = false;
     runner->drawableListStructureDirty = true;
     // It could be the first time we are initializing the grid
     if (runner->spatialGrid != nullptr)
@@ -2785,6 +2827,37 @@ bool Runner_isPaused(Runner* runner) {
 
 Runner* g_active_runner = NULL;
 
+static bool isRoREnemyName(const char* name) {
+    if (!name) return false;
+    // Canonical Risk of Rain enemy list (all 40 mob/enemy types)
+    static const char* const s_enemies[] = {
+        "oAcrid", "oBison", "oBoar", "oBoarM", "oBoarMS", "oBoss1", "oBoss2Clone", "oBoss3", "oBoss3Fake", "oBoss1Fake",
+        "oBot", "oChild", "oChildG", "oClay", "oCrab", "oCube", "oGiantJelly", "oGolem", "oGolemG", "oGolemS",
+        "oGuard", "oGuardG", "oIfrit", "oImp", "oImpFriend", "oImpG", "oImpGFake", "oImpGS", "oImpM", "oImpS",
+        "oJelly", "oJellyG2", "oLizard", "oLizardFG", "oLizardG", "oLizardGS", "oLizardT", "oMush", "oNaut",
+        "oScavenger", "oSlime", "oSpider", "oSpitter", "oTurtle", "oWisp", "oWispB", "oWispG", "oWispG2",
+        "oWorm", "oWurmBody", "oWurmHead", "oWurmController"
+    };
+    for (size_t i = 0; i < sizeof(s_enemies) / sizeof(s_enemies[0]); i++) {
+        if (strcmp(name, s_enemies[i]) == 0) return true;
+    }
+    return false;
+}
+
+static bool isRoRBossName(const char* name) {
+    if (!name) return false;
+    // Canonical Risk of Rain boss list
+    static const char* const s_bosses[] = {
+        "oAcrid", "oBoar", "oBoss1", "oBoss2Clone", "oBoss3", "oBoss3Fake", "oBoss1Fake",
+        "oGiantJelly", "oGolemG", "oIfrit", "oImpG", "oImpGS", "oJellyG2", "oLizardGS",
+        "oScavenger", "oTurtle", "oWispB", "oWorm", "oWurmHead", "oWurmBody", "oWurmController"
+    };
+    for (size_t i = 0; i < sizeof(s_bosses) / sizeof(s_bosses[0]); i++) {
+        if (strcmp(name, s_bosses[i]) == 0) return true;
+    }
+    return false;
+}
+
 Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileSystem* fileSystem, AudioSystem* audioSystem, uint32_t randomSeed) {
     requireNotNull(dataWin);
     requireNotNull(vm);
@@ -2844,6 +2917,95 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
             }
         }
     }
+    runner->isEnemyObject = (bool*) safeCalloc(dataWin->objt.count, sizeof(bool));
+    runner->isBossObject = (bool*) safeCalloc(dataWin->objt.count, sizeof(bool));
+    runner->isDroneObject = (bool*) safeCalloc(dataWin->objt.count, sizeof(bool));
+    runner->isArtifact8BoxObject = (bool*) safeCalloc(dataWin->objt.count, sizeof(bool));
+
+    // Populate Artifact 8 Box classification (O(1) lookup during drawing)
+    repeat(dataWin->objt.count, oi) {
+        int32_t cur = (int32_t)oi;
+        while (cur >= 0 && (uint32_t)cur < dataWin->objt.count) {
+            GameObject* obj = &dataWin->objt.objects[cur];
+            if (obj->name) {
+                if (strstr(obj->name, "Artifact8Box") != NULL || strcmp(obj->name, "pArtifact8Box") == 0) {
+                    runner->isArtifact8BoxObject[oi] = true;
+                    break;
+                }
+            }
+            cur = obj->parentId;
+        }
+    }
+
+    // Populate RoR enemy, boss, and drone classifications
+    repeat(dataWin->objt.count, oi) {
+        if (dataWin->objt.objects[oi].name) {
+            const char* oname = dataWin->objt.objects[oi].name;
+            if (isRoREnemyName(oname)) {
+                runner->isEnemyObject[oi] = true;
+            }
+            if (isRoRBossName(oname)) {
+                runner->isBossObject[oi] = true;
+            }
+            if (strncmp(oname, "oDrone", 6) == 0 || strncmp(oname, "pDrone", 6) == 0 || strcmp(oname, "oSniperDrone") == 0) {
+                runner->isDroneObject[oi] = true;
+            }
+        }
+    }
+
+    int32_t pEnemyIndex = -1;
+    int32_t pBossIndex = -1;
+    int32_t pDroneIndex = -1;
+    repeat(dataWin->objt.count, oi) {
+        if (dataWin->objt.objects[oi].name) {
+            if (pEnemyIndex < 0 && strcmp(dataWin->objt.objects[oi].name, "pEnemy") == 0) {
+                pEnemyIndex = (int32_t)oi;
+            }
+            if (pBossIndex < 0 && strcmp(dataWin->objt.objects[oi].name, "pBoss") == 0) {
+                pBossIndex = (int32_t)oi;
+            }
+            if (pDroneIndex < 0 && strcmp(dataWin->objt.objects[oi].name, "pDrone") == 0) {
+                pDroneIndex = (int32_t)oi;
+            }
+        }
+    }
+    if (pDroneIndex >= 0) {
+        repeat(dataWin->objt.count, oi) {
+            int32_t cur = (int32_t)oi;
+            while (cur >= 0 && (uint32_t)cur < dataWin->objt.count) {
+                if (cur == pDroneIndex) {
+                    runner->isDroneObject[oi] = true;
+                    break;
+                }
+                cur = dataWin->objt.objects[cur].parentId;
+            }
+        }
+    }
+    if (pEnemyIndex >= 0) {
+        repeat(dataWin->objt.count, oi) {
+            int32_t cur = (int32_t)oi;
+            while (cur >= 0 && (uint32_t)cur < dataWin->objt.count) {
+                if (cur == pEnemyIndex) {
+                    runner->isEnemyObject[oi] = true;
+                    break;
+                }
+                cur = dataWin->objt.objects[cur].parentId;
+            }
+        }
+    }
+    if (pBossIndex >= 0) {
+        repeat(dataWin->objt.count, oi) {
+            int32_t cur = (int32_t)oi;
+            while (cur >= 0 && (uint32_t)cur < dataWin->objt.count) {
+                if (cur == pBossIndex) {
+                    runner->isBossObject[oi] = true;
+                    break;
+                }
+                cur = dataWin->objt.objects[cur].parentId;
+            }
+        }
+    }
+
     runner->gameSpeedOverride = 0.0;
     double initialFps = (double)dataWin->gen8.gms2FPS;
     runner->fps = initialFps;
@@ -4309,14 +4471,15 @@ static void dispatchOutsideRoomEvents(Runner* runner) {
             }
 
             if (outside && !inst->outsideRoom) {
+                inst->outsideRoom = true;
                 Runner_executeResolvedEvent(runner, inst, EVENT_OTHER, OTHER_OUTSIDE_ROOM, codeId, ownerObjectIndex);
                 if (runner->pendingRoom >= 0) {
                     arrsetlen(runner->instanceSnapshots, snapshotBase);
                     return;
                 }
+            } else if (!outside && inst->outsideRoom) {
+                inst->outsideRoom = false;
             }
-
-            inst->outsideRoom = outside;
         }
 
         arrsetlen(runner->instanceSnapshots, snapshotBase);
@@ -4364,20 +4527,23 @@ static void dispatchOutsideViewEvents(Runner* runner, int32_t viewIndex) {
             InstanceBBox bbox = Collision_computeBBox(runner, inst);
 
             if (bbox.valid) {
-                outside = (viewLeft > bbox.right || bbox.left > viewRight || 0 > bbox.bottom || bbox.top > viewBottom);
+                outside = (viewLeft > bbox.right || bbox.left > viewRight || viewTop > bbox.bottom || bbox.top > viewBottom);
             } else {
                 outside = ((float) viewLeft > inst->x || inst->x > (float) viewRight || (float) viewTop > inst->y || inst->y > (float) viewBottom);
             }
 
-            if (outside && !inst->outsideRoom) {
-                Runner_executeResolvedEvent(runner, inst, EVENT_OTHER, OTHER_OUTSIDE_ROOM, codeId, ownerObjectIndex);
+            uint8_t viewBit = (uint8_t)(1u << (viewIndex & 7));
+            bool wasOutside = (inst->outsideViewMask & viewBit) != 0;
+            if (outside && !wasOutside) {
+                inst->outsideViewMask |= viewBit;
+                Runner_executeResolvedEvent(runner, inst, EVENT_OTHER, subtype, codeId, ownerObjectIndex);
                 if (runner->pendingRoom >= 0) {
                     arrsetlen(runner->instanceSnapshots, snapshotBase);
                     return;
                 }
+            } else if (!outside && wasOutside) {
+                inst->outsideViewMask &= (uint8_t)~viewBit;
             }
-
-            inst->outsideRoom = outside;
         }
 
         arrsetlen(runner->instanceSnapshots, snapshotBase);
@@ -4469,6 +4635,28 @@ void Runner_handlePendingRoomChange(Runner* runner) {
         int32_t newRoomIndex = runner->pendingRoom;
         runner->pendingRoom = -1;
 
+        // Auto-resume save state if booting up and transitioning out of rInit
+        if ((oldRoomIndex == 0 || (oldRoomName && strncmp(oldRoomName, "rInit", 5) == 0)) && SaveState_exists()) {
+            NCLP_onRoomEnd(runner);
+            Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_END);
+            if (runner->renderer && runner->renderer->vtable && runner->renderer->vtable->onRoomEnd) {
+                runner->renderer->vtable->onRoomEnd(runner->renderer, oldRoomIndex);
+            }
+            if (runner->audioSystem && runner->audioSystem->vtable && runner->audioSystem->vtable->stopAll) {
+                runner->audioSystem->vtable->stopAll(runner->audioSystem);
+            }
+            if (SaveState_restore(runner)) {
+                logInfo("Runner: Autosave restored successfully into room %s (%d)\n",
+                        runner->currentRoom->name, runner->currentRoomIndex);
+                // Note: Do not fire stage start event here, as that causes oP to teleport to level spawn and resets difficulty
+                Runner_cleanupDestroyedInstances(runner);
+                Runner_sweepDeadStructs(runner);
+                return;
+            } else {
+                logWarn("Runner: Failed to restore autosave, continuing normal startup\n");
+            }
+        }
+
         if (newRoomIndex <= 2 || newRoomIndex == 16) {
             runner->debug_test_active = false;
         }
@@ -4492,6 +4680,11 @@ void Runner_handlePendingRoomChange(Runner* runner) {
         const char* newRoomName = runner->dataWin->room.rooms[newRoomIndex].name;
 
         logInfo("Room changed: %s (room %d) -> %s (room %d)\n", oldRoomName, oldRoomIndex, newRoomName, newRoomIndex);
+
+        // If exiting a gameplay room to a non-gameplay room (e.g. title/select/gameover), delete save state
+        if (isGameplayRoom(oldRoomName) && !isGameplayRoom(newRoomName)) {
+            SaveState_delete();
+        }
 
         // If the old room is persistent, save its instance and visual state
         if (oldRoom->persistent) {
@@ -6115,6 +6308,23 @@ void Runner_free(Runner* runner) {
     if (runner->isVisualEffectObject != nullptr) {
         free(runner->isVisualEffectObject);
         runner->isVisualEffectObject = nullptr;
+    }
+
+    if (runner->isEnemyObject != nullptr) {
+        free(runner->isEnemyObject);
+        runner->isEnemyObject = nullptr;
+    }
+    if (runner->isBossObject != nullptr) {
+        free(runner->isBossObject);
+        runner->isBossObject = nullptr;
+    }
+    if (runner->isDroneObject != nullptr) {
+        free(runner->isDroneObject);
+        runner->isDroneObject = nullptr;
+    }
+    if (runner->isArtifact8BoxObject != nullptr) {
+        free(runner->isArtifact8BoxObject);
+        runner->isArtifact8BoxObject = nullptr;
     }
 
     {

@@ -569,7 +569,26 @@ static void blitSubRect(SWRenderer *sw, uint32_t pageId,
                     }
                 }
             }
+        } else if (!needsTint && sw->blendMode == bm_normal) {
+            // Fast-path: untinted semi-transparent sprite (e.g. Command dialog item icons with fade_alpha)
+            uint32_t ga_int = (uint32_t)(globalAlpha * 255.0f);
+            for (int r = 0; r < h; r++) {
+                uint16_t *d_ptr = target + (dy + r) * targetStride + dx;
+                const uint16_t *s_rgb = page->rgb + (sy + r) * pageStride + sx;
+                const uint8_t  *s_alpha = page->alpha + (sy + r) * pageStride + sx;
+
+                for (int c = 0; c < w; c++) {
+                    uint8_t a = (uint8_t)((s_alpha[c] * ga_int) >> 8);
+                    if (a == 0) continue;
+                    if (a == 255) {
+                        d_ptr[c] = s_rgb[c];
+                    } else {
+                        d_ptr[c] = blend_pixel_rgb565(d_ptr[c], s_rgb[c], a);
+                    }
+                }
+            }
         } else {
+            // General fallback: tinted or additive blending
             uint32_t ga_int = (uint32_t)(globalAlpha * 255.0f);
             for (int r = 0; r < h; r++) {
                 uint16_t *d_ptr = target + (dy + r) * targetStride + dx;
@@ -949,6 +968,7 @@ static void swDrawSpritePos(Renderer *renderer, int32_t tpagIndex, float x1, flo
 }
 
 static void swDrawSpriteTiled(Renderer *renderer, int32_t tpagIndex, float originX, float originY, float x, float y, float xscale, float yscale, bool tileX, bool tileY, float roomW, float roomH, uint32_t color, float alpha) {
+    SWRenderer *sw = (SWRenderer *)renderer;
     DataWin *dw = renderer->dataWin;
     if (!dw || tpagIndex < 0 || (uint32_t)tpagIndex >= dw->tpag.count) return;
 
@@ -965,9 +985,123 @@ static void swDrawSpriteTiled(Renderer *renderer, int32_t tpagIndex, float origi
     float endX = tileX ? roomW : (startX + tileW);
     float endY = tileY ? roomH : (startY + tileH);
 
+    // Viewport Culling: Clamp tiled loop to the camera visible frustum.
+    // In gigantic rooms like r6_1_1 (5500x2400), this drops tile loop iterations from ~3,200 to ~12.
+    float minVisX, maxVisX, minVisY, maxVisY;
+    if (!sw->inGUI) {
+        minVisX = (float)sw->viewX - tileW;
+        maxVisX = (float)(sw->viewX + sw->viewW) + tileW;
+        minVisY = (float)sw->viewY - tileH;
+        maxVisY = (float)(sw->viewY + sw->viewH) + tileH;
+    } else {
+        minVisX = -tileW;
+        maxVisX = (float)sw->targetWidth + tileW;
+        minVisY = -tileH;
+        maxVisY = (float)sw->targetHeight + tileH;
+    }
+
+    if (tileX) {
+        if (minVisX > startX) {
+            float skipX = floorf((minVisX - startX) / tileW);
+            if (skipX > 0.0f) startX += skipX * tileW;
+        }
+        if (endX > maxVisX) endX = maxVisX;
+    } else {
+        if (startX + tileW < minVisX || startX > maxVisX) return;
+    }
+
+    if (tileY) {
+        if (minVisY > startY) {
+            float skipY = floorf((minVisY - startY) / tileH);
+            if (skipY > 0.0f) startY += skipY * tileH;
+        }
+        if (endY > maxVisY) endY = maxVisY;
+    } else {
+        if (startY + tileH < minVisY || startY > maxVisY) return;
+    }
+
+    if (startX >= endX || startY >= endY) return;
+
     for (float curY = startY; curY < endY; curY += tileH) {
         for (float curX = startX; curX < endX; curX += tileW) {
             swDrawSprite(renderer, tpagIndex, curX + originX, curY + originY, originX, originY, xscale, yscale, 0.0f, color, alpha);
+        }
+    }
+}
+
+// ===[ Shape Drawing Helpers ]===
+
+static void sw_fill_rect_solid(uint16_t *target, int stride, int cx0, int cy0, int cx1, int cy1, uint16_t c565) {
+    for (int y = cy0; y < cy1; y++) {
+        uint16_t *row = target + y * stride;
+        for (int x = cx0; x < cx1; x++) row[x] = c565;
+    }
+}
+
+static void sw_blend_rect_black(uint16_t *target, int stride, int cx0, int cy0, int cx1, int cy1, uint32_t inv_a5) {
+    for (int y = cy0; y < cy1; y++) {
+        uint16_t *row = target + y * stride;
+        int x = cx0;
+        for (; x + 3 < cx1; x += 4) {
+            uint32_t p0 = row[x];
+            uint32_t p1 = row[x + 1];
+            uint32_t p2 = row[x + 2];
+            uint32_t p3 = row[x + 3];
+            row[x]     = (uint16_t)((((p0 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | ((((p0 & 0x07E0) * inv_a5) >> 5) & 0x07E0);
+            row[x + 1] = (uint16_t)((((p1 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | ((((p1 & 0x07E0) * inv_a5) >> 5) & 0x07E0);
+            row[x + 2] = (uint16_t)((((p2 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | ((((p2 & 0x07E0) * inv_a5) >> 5) & 0x07E0);
+            row[x + 3] = (uint16_t)((((p3 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | ((((p3 & 0x07E0) * inv_a5) >> 5) & 0x07E0);
+        }
+        for (; x < cx1; x++) {
+            uint32_t p = row[x];
+            row[x] = (uint16_t)((((p & 0xF81F) * inv_a5) >> 5) & 0xF81F) | ((((p & 0x07E0) * inv_a5) >> 5) & 0x07E0);
+        }
+    }
+}
+
+static void sw_blend_rect_color(uint16_t *target, int stride, int cx0, int cy0, int cx1, int cy1, uint32_t const_s_rb, uint32_t const_s_g, uint32_t inv_a5) {
+    for (int y = cy0; y < cy1; y++) {
+        uint16_t *row = target + y * stride;
+        int x = cx0;
+        for (; x + 3 < cx1; x += 4) {
+            uint32_t p0 = row[x];
+            uint32_t p1 = row[x + 1];
+            uint32_t p2 = row[x + 2];
+            uint32_t p3 = row[x + 3];
+            row[x]     = (uint16_t)((((const_s_rb + (p0 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | (((const_s_g + (p0 & 0x07E0) * inv_a5) >> 5) & 0x07E0));
+            row[x + 1] = (uint16_t)((((const_s_rb + (p1 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | (((const_s_g + (p1 & 0x07E0) * inv_a5) >> 5) & 0x07E0));
+            row[x + 2] = (uint16_t)((((const_s_rb + (p2 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | (((const_s_g + (p2 & 0x07E0) * inv_a5) >> 5) & 0x07E0));
+            row[x + 3] = (uint16_t)((((const_s_rb + (p3 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | (((const_s_g + (p3 & 0x07E0) * inv_a5) >> 5) & 0x07E0));
+        }
+        for (; x < cx1; x++) {
+            uint32_t p0 = row[x];
+            row[x] = (uint16_t)((((const_s_rb + (p0 & 0xF81F) * inv_a5) >> 5) & 0xF81F) | (((const_s_g + (p0 & 0x07E0) * inv_a5) >> 5) & 0x07E0));
+        }
+    }
+}
+
+static void sw_outline_rect(uint16_t *target, int stride, int clipX0, int clipY0, int clipX1, int clipY1, int rx0, int ry0, int rx1, int ry1, uint16_t c565) {
+    int ocx0 = rx0 < clipX0 ? clipX0 : rx0;
+    int ocx1 = rx1 >= clipX1 ? clipX1 - 1 : rx1;
+    int ocy0 = ry0 < clipY0 ? clipY0 : ry0;
+    int ocy1 = ry1 >= clipY1 ? clipY1 - 1 : ry1;
+
+    if (ocx0 <= ocx1) {
+        if (ry0 >= clipY0 && ry0 < clipY1) {
+            uint16_t *top = target + ry0 * stride;
+            for (int x = ocx0; x <= ocx1; x++) top[x] = c565;
+        }
+        if (ry1 >= clipY0 && ry1 < clipY1 && ry1 != ry0) {
+            uint16_t *bot = target + ry1 * stride;
+            for (int x = ocx0; x <= ocx1; x++) bot[x] = c565;
+        }
+    }
+    if (ocy0 <= ocy1) {
+        if (rx0 >= clipX0 && rx0 < clipX1) {
+            for (int y = ocy0; y <= ocy1; y++) target[y * stride + rx0] = c565;
+        }
+        if (rx1 >= clipX0 && rx1 < clipX1 && rx1 != rx0) {
+            for (int y = ocy0; y <= ocy1; y++) target[y * stride + rx1] = c565;
         }
     }
 }
@@ -982,28 +1116,21 @@ static void swDrawRectangle(Renderer *renderer, float x1, float y1, float x2, fl
     sw_transform_point(sw, x1, y1, &sx1, &sy1);
     sw_transform_point(sw, x2, y2, &sx2, &sy2);
 
-    int rx0 = (int)floorf(fminf(sx1, sx2));
-    int ry0 = (int)floorf(fminf(sy1, sy2));
-    int rx1 = (int)ceilf(fmaxf(sx1, sx2));
-    int ry1 = (int)ceilf(fmaxf(sy1, sy2));
+    float minX = sx1 < sx2 ? sx1 : sx2;
+    float maxX = sx1 > sx2 ? sx1 : sx2;
+    float minY = sy1 < sy2 ? sy1 : sy2;
+    float maxY = sy1 > sy2 ? sy1 : sy2;
+    int rx0 = (int)minX;
+    int ry0 = (int)minY;
+    int rx1 = (int)(maxX + 0.999f);
+    int ry1 = (int)(maxY + 0.999f);
 
     uint16_t c565 = bgr_to_rgb565(color);
     uint8_t a = (uint8_t)(alpha * 255.0f);
+    int stride = sw->targetWidth;
 
     if (outline) {
-        // Outline rectangle
-        for (int x = rx0; x <= rx1; x++) {
-            if (x >= sw->clipX0 && x < sw->clipX1) {
-                if (ry0 >= sw->clipY0 && ry0 < sw->clipY1) sw->currentTarget[ry0 * sw->targetWidth + x] = c565;
-                if (ry1 >= sw->clipY0 && ry1 < sw->clipY1) sw->currentTarget[ry1 * sw->targetWidth + x] = c565;
-            }
-        }
-        for (int y = ry0; y <= ry1; y++) {
-            if (y >= sw->clipY0 && y < sw->clipY1) {
-                if (rx0 >= sw->clipX0 && rx0 < sw->clipX1) sw->currentTarget[y * sw->targetWidth + rx0] = c565;
-                if (rx1 >= sw->clipX0 && rx1 < sw->clipX1) sw->currentTarget[y * sw->targetWidth + rx1] = c565;
-            }
-        }
+        sw_outline_rect(sw->currentTarget, stride, sw->clipX0, sw->clipY0, sw->clipX1, sw->clipY1, rx0, ry0, rx1, ry1, c565);
         return;
     }
 
@@ -1015,39 +1142,17 @@ static void swDrawRectangle(Renderer *renderer, float x1, float y1, float x2, fl
 
     if (cx0 >= cx1 || cy0 >= cy1) return;
 
-    int stride = sw->targetWidth;
     if (a == 255) {
-        for (int y = cy0; y < cy1; y++) {
-            uint16_t *row = sw->currentTarget + y * stride;
-            for (int x = cx0; x < cx1; x++) row[x] = c565;
-        }
+        sw_fill_rect_solid(sw->currentTarget, stride, cx0, cy0, cx1, cy1, c565);
     } else {
-        // Fast-path: precalculate constant source terms outside row loops
         uint32_t a5 = ((uint32_t)a + 4) >> 3; // Scale 0..255 to 0..32
         uint32_t inv_a5 = 32 - a5;
-        uint32_t const_s_rb = (uint32_t)(c565 & 0xF81F) * a5;
-        uint32_t const_s_g  = (uint32_t)(c565 & 0x07E0) * a5;
-
-        for (int y = cy0; y < cy1; y++) {
-            uint16_t *row = sw->currentTarget + y * stride;
-            int x = cx0;
-            // 2-pixel unrolled loop
-            for (; x + 1 < cx1; x += 2) {
-                uint32_t p0 = row[x];
-                uint32_t p1 = row[x + 1];
-                uint32_t rb0 = ((const_s_rb + (p0 & 0xF81F) * inv_a5) >> 5) & 0xF81F;
-                uint32_t g0  = ((const_s_g  + (p0 & 0x07E0) * inv_a5) >> 5) & 0x07E0;
-                uint32_t rb1 = ((const_s_rb + (p1 & 0xF81F) * inv_a5) >> 5) & 0xF81F;
-                uint32_t g1  = ((const_s_g  + (p1 & 0x07E0) * inv_a5) >> 5) & 0x07E0;
-                row[x]     = (uint16_t)(rb0 | g0);
-                row[x + 1] = (uint16_t)(rb1 | g1);
-            }
-            if (x < cx1) {
-                uint32_t p0 = row[x];
-                uint32_t rb0 = ((const_s_rb + (p0 & 0xF81F) * inv_a5) >> 5) & 0xF81F;
-                uint32_t g0  = ((const_s_g  + (p0 & 0x07E0) * inv_a5) >> 5) & 0x07E0;
-                row[x] = (uint16_t)(rb0 | g0);
-            }
+        if (c565 == 0) {
+            sw_blend_rect_black(sw->currentTarget, stride, cx0, cy0, cx1, cy1, inv_a5);
+        } else {
+            uint32_t const_s_rb = (uint32_t)(c565 & 0xF81F) * a5;
+            uint32_t const_s_g  = (uint32_t)(c565 & 0x07E0) * a5;
+            sw_blend_rect_color(sw->currentTarget, stride, cx0, cy0, cx1, cy1, const_s_rb, const_s_g, inv_a5);
         }
     }
 }
