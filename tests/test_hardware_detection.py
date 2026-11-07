@@ -60,9 +60,13 @@ class TestHardwareDetection(unittest.TestCase):
         Executes the detection script in a sandboxed bash environment.
         On Linux/CI, executes natively in bash. On Windows, executes inside Docker.
         """
+        git_bash = r"C:\Program Files\Git\bin\bash.exe"
         if sys.platform != "win32":
             root_dir = self.test_dir
             cmd_prefix = ["bash", "-c"]
+        elif os.path.exists(git_bash):
+            root_dir = self.test_dir.replace("\\", "/")
+            cmd_prefix = [git_bash, "-c"]
         else:
             root_dir = self.container_test_dir
             cmd_prefix = ["docker", "exec", "determined_moore", "bash", "-c"]

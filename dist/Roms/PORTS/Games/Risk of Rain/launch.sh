@@ -13,7 +13,7 @@ exec > /dev/null 2>&1
 
 # 1. Infallible Dynamic Hardware Detection & Safe Overclocking
 # Miyoo Mini Plus (MY354): 1800 MHz (AXP223 PMIC, 3000 mAh battery, WiFi hardware)
-# Miyoo Mini (MY282/MY283 v1-v4): 1400 MHz (conservative ceiling avoiding PMIC panic)
+# Miyoo Mini / Mini Flip / v1-v4 (MY282/MY283): 1400 MHz (conservative ceiling avoiding PMIC panic)
 #
 # CRITICAL RULE: Must not rely solely on /sys/class/net/wlan0.
 # When WiFi is disabled in OnionOS settings, /customer/app/axp_test wifioff cuts
@@ -93,28 +93,29 @@ cp /tmp/asound.conf /root/.asoundrc 2>/dev/null || true
 cp /tmp/asound.conf ~/.asoundrc 2>/dev/null || true
 export ASOUNDRC=/tmp/.asoundrc
 
-# 3. Clean exit trap: restore CPU clock, blank framebuffer, restore system audioserver, flush caches
+# 3. Clean exit trap: restore CPU clock, flush caches, safe audio restoration
 cleanup() {
     echo "[*] Cleaning up and restoring state..."
     # 1. Flush filesystem buffers to SD card to prevent FAT32/exFAT corruption
     sync
 
-    # 2. Clear framebuffer to prevent frozen screen artifacts on exit (MENU button)
-    dd if=/dev/zero of=/dev/fb0 bs=640 count=480 2>/dev/null || true
-
-    # 3. Restore CPU clock to 1200 MHz
+    # 2. Restore CPU clock to 1200 MHz
     set_cpu 1200
 
-    # 4. Restore CPU governor to ondemand
+    # 3. Restore CPU governor to ondemand
     if [ -f "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor" ]; then
         echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
     fi
 
-    # 5. Ensure OnionOS audioserver is restored
-    if [ -x "/customer/app/audioserver" ]; then
-        /customer/app/audioserver &
-    elif command -v audioserver >/dev/null 2>&1; then
-        audioserver &
+    # 4. Restore OnionOS audioserver ONLY if not managed by launch_standalone.sh
+    # (launch_standalone.sh with KillAudioserver=1 handles audioserver restart automatically;
+    # spawning a duplicate instance causes an audio deadlock / black screen on Miyoo Mini classic)
+    if [ "$ONION_PORT" != "1" ] && ! pgrep audioserver >/dev/null 2>&1; then
+        if [ -x "/customer/app/audioserver" ]; then
+            /customer/app/audioserver >/dev/null 2>&1 &
+        elif command -v audioserver >/dev/null 2>&1; then
+            audioserver >/dev/null 2>&1 &
+        fi
     fi
 
     sync

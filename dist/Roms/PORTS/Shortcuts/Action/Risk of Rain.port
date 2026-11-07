@@ -8,6 +8,7 @@ PerformanceMode=0
 Arguments=""
 
 unset LD_PRELOAD
+export ONION_PORT=1
 PORTDIR="$(dirname "$0")"
 
 # Dynamic game directory lookup (relative to Shortcuts/Action, Shortcuts, or ports root)
@@ -23,6 +24,9 @@ else
     GAMEDIR="/mnt/SDCARD/Roms/PORTS/Games/Risk of Rain"
 fi
 
+# Disable keymon monitoring of MENU button while port is running (standard OnionOS port pattern)
+touch /tmp/disable_menu_button
+
 if [ -f "/mnt/SDCARD/Emu/PORTS/launch_standalone.sh" ]; then
     /mnt/SDCARD/Emu/PORTS/launch_standalone.sh "$GameName" "$GameDir" "$GameExecutable" "$Arguments" "$GameDataFile" "$KillAudioserver" "$PerformanceMode"
 else
@@ -33,3 +37,5 @@ else
         ./RiskOfRain
     fi
 fi
+
+rm -f /tmp/disable_menu_button

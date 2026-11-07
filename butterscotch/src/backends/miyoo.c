@@ -38,6 +38,16 @@
 #include <arm_neon.h>
 #endif
 
+// Fallbacks for clamshell lid switch events (Miyoo Mini Flip)
+#ifndef EV_SW
+#define EV_SW 0x05
+#endif
+#ifndef SW_LID
+#define SW_LID 0x00
+#endif
+
+static bool s_lid_was_closed = false;
+
 #define SCREEN_WIDTH 640
 #define SCREEN_HEIGHT 480
 #define MAX_INPUT_DEVS 4
@@ -52,6 +62,10 @@ static size_t s_fb_size = 0;
 static size_t s_line_length = 0;
 static struct fb_var_screeninfo s_vinfo;
 static struct fb_fix_screeninfo s_finfo;
+
+// Dynamic centering offsets for 752x560 (Miyoo Mini v4 & Mini Flip) vs 640x480 (MMP / v1-v3)
+static int s_fb_offset_x = 0;
+static int s_fb_offset_y = 0;
 
 // Evdev input state
 static int s_input_fds[MAX_INPUT_DEVS] = {-1, -1, -1, -1};
@@ -155,9 +169,13 @@ static int mmp_fb_init(const char *fb_device) {
     if (y_res == 0) y_res = SCREEN_HEIGHT;
     s_fb_size = y_res * s_line_length;
 
-    logInfo("Miyoo FB Info: %ux%u (Virtual: %ux%u) | BPP: %u | LineLength: %zu | TotalSize: %zu\n",
+    // Calculate dynamic centering offsets for panels larger than 640x480 (Miyoo Mini v4 & Mini Flip: 752x560)
+    s_fb_offset_x = (s_vinfo.xres > SCREEN_WIDTH) ? (int)(s_vinfo.xres - SCREEN_WIDTH) / 2 : 0;
+    s_fb_offset_y = (s_vinfo.yres > SCREEN_HEIGHT) ? (int)(s_vinfo.yres - SCREEN_HEIGHT) / 2 : 0;
+
+    logInfo("Miyoo FB Info: %ux%u (Virtual: %ux%u) | BPP: %u | LineLength: %zu | TotalSize: %zu | Offsets: (%d, %d)\n",
             s_vinfo.xres, s_vinfo.yres, s_vinfo.xres_virtual, s_vinfo.yres_virtual,
-            s_vinfo.bits_per_pixel, s_line_length, s_fb_size);
+            s_vinfo.bits_per_pixel, s_line_length, s_fb_size, s_fb_offset_x, s_fb_offset_y);
 
     s_fb_ptr = mmap(NULL, s_fb_size, PROT_READ | PROT_WRITE, MAP_SHARED, s_fb_fd, 0);
     if (s_fb_ptr == MAP_FAILED) {
@@ -166,6 +184,9 @@ static int mmp_fb_init(const char *fb_device) {
         s_fb_fd = -1;
         return -4;
     }
+
+    // Clean entire framebuffer to pitch black to ensure pure black borders
+    memset(s_fb_ptr, 0, s_fb_size);
 
     s_vinfo.xoffset = 0;
     s_vinfo.yoffset = 0;
@@ -178,6 +199,8 @@ static void mmp_fb_close(void) {
     if (s_fb_ptr && s_fb_ptr != MAP_FAILED) {
         memset(s_fb_ptr, 0, s_fb_size);
         if (s_fb_fd >= 0) {
+            s_vinfo.xoffset = 0;
+            s_vinfo.yoffset = 0;
             ioctl(s_fb_fd, FBIOPAN_DISPLAY, &s_vinfo);
         }
         munmap(s_fb_ptr, s_fb_size);
@@ -201,8 +224,8 @@ static void mmp_video_flip_180(const uint16_t *src_buffer, int width, int height
         const uint8x8_t  v_alpha_ff = vdup_n_u8(0xFF);
 
         for (int y = 0; y < height; y++) {
-            int dst_y = (height - 1) - y;
-            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
+            int dst_y = s_fb_offset_y + (height - 1) - y;
+            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length) + s_fb_offset_x;
             const uint16_t *src_row = src_buffer + y * width;
 
             int x = 0;
@@ -261,8 +284,8 @@ static void mmp_video_flip_180(const uint16_t *src_buffer, int width, int height
     } else {
         // 16-bit Framebuffer (RGB565) - Direct 128-bit vector reversal
         for (int y = 0; y < height; y++) {
-            int dst_y = (height - 1) - y;
-            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
+            int dst_y = s_fb_offset_y + (height - 1) - y;
+            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length) + s_fb_offset_x;
             const uint16_t *src_row = src_buffer + y * width;
 
             int x = 0;
@@ -286,8 +309,8 @@ static void mmp_video_flip_180(const uint16_t *src_buffer, int width, int height
     if (s_vinfo.bits_per_pixel == 32) {
         // 32-bit Framebuffer (XRGB8888) - Scalar fallback
         for (int y = 0; y < height; y++) {
-            int dst_y = (height - 1) - y;
-            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
+            int dst_y = s_fb_offset_y + (height - 1) - y;
+            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length) + s_fb_offset_x;
             const uint16_t *src_row = src_buffer + y * width;
             for (int x = 0; x < width; x++) {
                 int dst_x = (width - 1) - x;
@@ -304,8 +327,8 @@ static void mmp_video_flip_180(const uint16_t *src_buffer, int width, int height
     } else {
         // 16-bit Framebuffer (RGB565) - Scalar fallback
         for (int y = 0; y < height; y++) {
-            int dst_y = (height - 1) - y;
-            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length);
+            int dst_y = s_fb_offset_y + (height - 1) - y;
+            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length) + s_fb_offset_x;
             const uint16_t *src_row = src_buffer + y * width;
             for (int x = 0; x < width; x++) {
                 int dst_x = (width - 1) - x;
@@ -514,7 +537,8 @@ static void mmp_video_flip_180_scale_512_to_640(const uint16_t *src_buffer) {
 
     if (s_vinfo.bits_per_pixel == 32) {
         for (int y = 0; y < dstH; y++) {
-            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + y * s_line_length);
+            int dst_y = s_fb_offset_y + y;
+            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length) + s_fb_offset_x;
             const ScaleMap *ry = &s_scale_rows_512[y];
             const uint16_t *src0 = src_buffer + ry->s0 * srcW;
             const uint16_t *src1 = src_buffer + ry->s1 * srcW;
@@ -555,7 +579,8 @@ static void mmp_video_flip_180_scale_512_to_640(const uint16_t *src_buffer) {
     } else {
         // 16-bit Framebuffer fallback
         for (int y = 0; y < dstH; y++) {
-            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + y * s_line_length);
+            int dst_y = s_fb_offset_y + y;
+            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length) + s_fb_offset_x;
             const ScaleMap *ry = &s_scale_rows_512[y];
             const uint16_t *src0 = src_buffer + ry->s0 * srcW;
             const uint16_t *src1 = src_buffer + ry->s1 * srcW;
@@ -607,7 +632,8 @@ static void mmp_video_flip_180_scale_426_to_640(const uint16_t *src_buffer) {
 
     if (s_vinfo.bits_per_pixel == 32) {
         for (int y = 0; y < dstH; y++) {
-            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + y * s_line_length);
+            int dst_y = s_fb_offset_y + y;
+            uint32_t *dst_row = (uint32_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length) + s_fb_offset_x;
             const ScaleMap *ry = &s_scale_rows_426[y];
             const uint16_t *src0 = src_buffer + ry->s0 * srcW;
             const uint16_t *src1 = src_buffer + ry->s1 * srcW;
@@ -648,7 +674,8 @@ static void mmp_video_flip_180_scale_426_to_640(const uint16_t *src_buffer) {
     } else {
         // 16-bit Framebuffer fallback
         for (int y = 0; y < dstH; y++) {
-            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + y * s_line_length);
+            int dst_y = s_fb_offset_y + y;
+            uint16_t *dst_row = (uint16_t *)((uint8_t *)s_fb_ptr + dst_y * s_line_length) + s_fb_offset_x;
             const ScaleMap *ry = &s_scale_rows_426[y];
             const uint16_t *src0 = src_buffer + ry->s0 * srcW;
             const uint16_t *src1 = src_buffer + ry->s1 * srcW;
@@ -851,16 +878,16 @@ static void mmp_init_target_clock(void) {
         return;
     }
 
-    // 2. Hardware model detection: 354 = Plus (1800 MHz), 283 = Classic (1400 MHz)
+    // 2. Hardware model detection: 354 = Plus (1800 MHz), otherwise 1400 MHz (Classic, v4, Mini Flip)
     FILE *fp = fopen("/tmp/deviceModel", "r");
     if (fp) {
         int model = 0;
         if (fscanf(fp, "%d", &model) == 1) {
             if (model == 354) s_target_cpu_mhz = 1800;
-            else if (model == 283) s_target_cpu_mhz = 1400;
+            else s_target_cpu_mhz = 1400; // Miyoo Mini classic (283), v4, and Mini Flip (284/285)
         }
         fclose(fp);
-        logInfo("[ClockGuard] Target clock from /tmp/deviceModel: %d MHz\n", s_target_cpu_mhz);
+        logInfo("[ClockGuard] Target clock from /tmp/deviceModel (%d): %d MHz\n", model, s_target_cpu_mhz);
         return;
     }
 
@@ -899,12 +926,22 @@ static void* mmp_clock_guard_worker(void* arg) {
 
 // ===[ Butterscotch Platform API ]===
 
+static volatile sig_atomic_t s_signal_exit_requested = 0;
+
 static void miyoo_exit_signal_handler(int sig) {
     (void)sig;
-    if (g_runner && SaveState_canSave(g_runner)) {
-        SaveState_save(g_runner);
+    if (s_signal_exit_requested > 0) {
+        // Subsequent signal received: emergency safe cleanup
+        if (g_runner && SaveState_canSave(g_runner)) {
+            SaveState_save(g_runner);
+        }
+        platformExit();
+        _exit(0);
     }
-    _exit(0);
+    s_signal_exit_requested = 1;
+    if (g_runner) {
+        g_runner->shouldExit = true;
+    }
 }
 
 bool platformInit(int32_t reqW, int32_t reqH, const char *title, bool headless) {
@@ -913,6 +950,7 @@ bool platformInit(int32_t reqW, int32_t reqH, const char *title, bool headless) 
     (void)title;
     (void)headless;
 
+    s_signal_exit_requested = 0;
     signal(SIGTERM, miyoo_exit_signal_handler);
     signal(SIGINT, miyoo_exit_signal_handler);
 
@@ -933,6 +971,7 @@ bool platformInit(int32_t reqW, int32_t reqH, const char *title, bool headless) 
 }
 
 void platformExit(void) {
+    if (!g_initialized) return;
     if (s_clock_running) {
         s_clock_running = false;
         pthread_join(s_clock_thread, NULL);
@@ -1498,11 +1537,33 @@ static void mmp_check_network_autoconnect(Runner *runner) {
 }
 
 bool platformHandleEvents(void) {
-    bool exit_requested = false;
+    bool exit_requested = (s_signal_exit_requested != 0);
     struct input_event ev;
 
     for (int i = 0; i < s_num_fds; i++) {
         while (read(s_input_fds[i], &ev, sizeof(ev)) == sizeof(ev)) {
+            // Clamshell lid sensor handling (Miyoo Mini Flip: EV_SW / SW_LID)
+            if (ev.type == EV_SW && ev.code == SW_LID) {
+                bool lid_closed = (ev.value != 0);
+                if (lid_closed && !s_lid_was_closed) {
+                    s_lid_was_closed = true;
+                    logInfo("Miyoo Clamshell: Lid closed! Triggering emergency autosave & pause...\n");
+                    if (g_runner && SaveState_canSave(g_runner)) {
+                        SaveState_save(g_runner);
+                    }
+                    if (g_runner) {
+                        Runner_setPaused(g_runner, true);
+                        if (g_runner->audioSystem && g_runner->audioSystem->vtable && g_runner->audioSystem->vtable->stopAll) {
+                            g_runner->audioSystem->vtable->stopAll(g_runner->audioSystem);
+                        }
+                    }
+                } else if (!lid_closed && s_lid_was_closed) {
+                    s_lid_was_closed = false;
+                    logInfo("Miyoo Clamshell: Lid opened! Game maintained paused for safe resume.\n");
+                }
+                continue;
+            }
+
             if (ev.type != EV_KEY) continue;
             bool pressed = (ev.value != 0);
 
@@ -1578,7 +1639,7 @@ bool platformHandleEvents(void) {
     }
 
     if (exit_requested) {
-        logInfo("Miyoo: Exit requested by user (MENU or START+SELECT).\n");
+        logInfo("Miyoo: Exit requested (MENU, START+SELECT, or signal).\n");
         if (SaveState_canSave(g_runner)) {
             logInfo("Miyoo: Active gameplay run detected, writing autosave.state...\n");
             SaveState_save(g_runner);
